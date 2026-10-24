@@ -208,3 +208,111 @@ For scenario questions, explain the request/data flow, identity, network path, d
 - `B:\TUTS\H1B\MD_Khairul_Alam_Resume_2027.docx` — Azure services and project examples in the CV-grounded inventory.
 - `B:\TUTS\H1B\Backend-Development-Viva-Preparation.md` — backend concepts used to organize the Azure service mapping. The file itself does not name Azure services.
 - The Azure organization, identity, networking, hosting, data, monitoring, and interview sections add supplementary administration context beyond the services explicitly described in the CV.
+
+---
+
+## Additional Questpond question sets
+
+### Questpond source: 07-azure.md
+
+---
+
+
+
+---
+
+#### Azure
+
+###### 1. What is Azure App Service, and how do you deploy a .NET application to it? (PDF p. 11)
+**Answer:** Azure App Service is a managed platform for hosting web apps and APIs without managing the underlying VM. Build and publish the application, configure the runtime/settings and deployment identity, then deploy through a supported pipeline, ZIP/package, or container workflow; verify health and logs after release.
+
+###### 2. What are the options to deploy a Web API on Azure? (App Service / AKS / Azure Container Service) (PDF p. 11)
+**Answer:** Options include App Service for managed web hosting, Azure Kubernetes Service (AKS) for orchestrated containers, and Azure Container Apps for many containerized workloads; virtual machines are another option when OS-level control is required. “Azure Container Service” is a retired product name; select based on operational needs, scaling, and workload.
+
+###### 3. Why choose App Service to deploy a Web API? (PDF p. 11)
+**Answer:** App Service is a good choice when the API needs managed hosting, straightforward deployment, built-in TLS and scaling options, and the team does not need to manage a cluster or VM. It reduces operations compared with self-managed infrastructure, but offers less low-level control than AKS/VMs.
+
+###### 4. Difference between Azure App Service and Azure VM (PDF p. 11)
+**Answer:** App Service is a managed application-hosting platform with less OS administration and built-in web deployment features. A VM provides control over the operating system and software stack but requires the team to manage patching, security, availability, and deployment operations.
+
+###### 5. What are Azure Functions? How are they used with .NET? (PDF p. 11)
+**Answer:** Azure Functions is a managed event-driven compute service that runs code in response to triggers such as HTTP, timers, queues, or events. A .NET Function implements a trigger binding and can use input/output bindings or SDKs to interact with other services.
+
+###### 6. How will you secure an Azure Function? (PDF p. 11)
+**Answer:** Use the least-privilege identity for resource access, authenticate HTTP callers with the platform/identity provider or API gateway, protect secrets in Key Vault, restrict network exposure where possible, validate inputs, and enable monitoring. Function keys are shared secrets, not a replacement for user authentication/authorization.
+
+###### 7. I want to create a storage account and Function App. I don't want to enable the storage account, but the Function should read data; otherwise a hacker can tamper with the storage account. (PDF p. 11)
+**Answer:** Azure Functions requires a storage account for host state and certain runtime operations; disabling the required host storage is not a secure design. Separate host storage from business data, use a managed identity with read-only data permissions, disable public access where feasible, use private endpoints/firewall rules, and audit access. If the concern is data tampering, enforce least privilege and data integrity rather than removing required runtime storage.
+
+###### 8. What are Durable Functions? (PDF p. 11)
+**Answer:** Durable Functions extend Azure Functions with stateful orchestration for workflows, including durable timers, retries, fan-out/fan-in, and human interaction. The runtime persists orchestration state so workflows can resume after function executions complete.
+
+###### 9. How do you check whether a Function App is healthy? (PDF p. 11)
+**Answer:** Use an application health endpoint or synthetic invocation, Azure Monitor/Application Insights availability and failure telemetry, platform health/status, and dependency checks. Alert on meaningful service-level indicators such as failed executions, latency, and queue age, not only process availability.
+
+###### 10. “14. I want to receive an email if the Function App is failing. How do you configure this?” (PDF p. 11)
+**Answer:** The source contains an embedded “14.” even though this is its tenth listed item. Configure an Azure Monitor alert on a suitable Function/App Insights metric or log query, attach an Action Group with an email recipient, and test the alert using an actionable failure condition and threshold.
+
+###### 11. What is Azure Key Vault and why is it important? (PDF p. 11)
+**Answer:** Key Vault securely stores and controls access to secrets, keys, and certificates, with auditing and rotation/integration options. It reduces hard-coded credentials and centralizes access policy; use managed identity and least privilege to retrieve only what an application needs.
+
+###### 12. What is Managed Identity in Azure? (PDF p. 11)
+**Answer:** Managed Identity gives an Azure resource an identity in Microsoft Entra ID so it can obtain tokens for supported services without storing credentials in application configuration. Assign only necessary roles and select system-assigned or user-assigned identity based on lifecycle/reuse needs.
+
+###### 13. What is Key Vault and how do you connect to Key Vault? (PDF p. 11)
+**Answer:** Key Vault is Azure's managed secret/key/certificate store. Enable a managed identity on the application, grant it the minimum required Key Vault data-plane role/access, then use the Azure SDK or configuration provider with that identity; do not embed client secrets in source code.
+
+###### 14. How do you implement CI/CD for a .NET project in Azure? (PDF p. 11)
+**Answer:** Define a pipeline that restores, builds, tests, scans, and packages the application, then deploys an immutable artifact through environments with approvals and health checks. Use federated/service connections with least privilege, store secrets securely, and support rollback or slot-based deployment.
+
+###### 15. What is Azure Service Bus and how does it work with .NET? (PDF p. 11)
+**Answer:** Azure Service Bus is a managed enterprise messaging service supporting queues and topics, durable delivery, dead-lettering, and competing consumers. A .NET service uses `Azure.Messaging.ServiceBus` clients/processors to send and consume messages; handle retries and idempotency because delivery may be at least once.
+
+###### 16. How do you decide whether to use a queue or topic in Azure Service Bus? (PDF p. 11)
+**Answer:** Use a queue when one logical consumer group should process each message; competing workers can share the load. Use a topic with subscriptions when a message must be independently delivered to multiple consumer groups, optionally filtered per subscription.
+
+###### 17. What is Event Grid in Azure, and when/why do we use it? (PDF p. 11)
+**Answer:** Event Grid is a managed event-routing service for discrete notifications about state changes, such as a blob being created. It routes events from publishers to subscribers with filtering and retry/dead-letter options; use it for event notification rather than long-lived work queues.
+
+###### 18. What is Event Hubs? Explain with an example. (PDF p. 11)
+**Answer:** Azure Event Hubs is a high-throughput event-ingestion and streaming platform that partitions ordered event streams and retains them for a configurable period. For example, many devices can stream telemetry to Event Hubs for independent consumer groups to process and analyze.
+
+###### 19. What is a data mart? (PDF p. 11)
+**Answer:** A data mart is a curated analytical data store focused on a business area or subject, such as sales. It provides structured, governed data for reporting and analysis and may be sourced from a broader data warehouse/lakehouse.
+
+###### 20. How do you implement logging and monitoring in Azure for .NET applications? (PDF p. 11)
+**Answer:** Emit structured logs and telemetry through `ILogger` and Application Insights/OpenTelemetry, propagate correlation/trace IDs, and use Azure Monitor workspaces/dashboards/alerts. Avoid logging secrets or unnecessary personal data, and base alerts on user-impacting signals and actionable thresholds.
+
+###### 21. Azure API Management questions (PDF p. 12)
+**Answer:** Azure API Management (APIM) is a managed API gateway and developer/API-management platform. It can publish APIs, apply policies for authentication, transformation, quotas/rate limits, and expose documentation; it should complement, not replace, service-level authorization.
+
+###### 22. How do you secure an ASP.NET Core API in Azure? (PDF p. 12)
+**Answer:** Authenticate with Microsoft Entra ID/OIDC or another trusted identity provider; enforce authorization policies in the API; use TLS, managed identity, Key Vault, least-privilege network/data access, and APIM/WAF protections as appropriate. Add input validation, patching, audit logs, and monitoring.
+
+###### 23. Explain some AI services in Azure (PDF p. 12)
+**Answer:** Examples include Azure AI Foundry services/models for generative AI, Azure AI Services for capabilities such as vision, speech, language, and document processing, and Azure Machine Learning for model development and deployment. Names and capabilities change, so verify the current product lineup and describe a specific use case.
+
+###### 24. Have you used AKS? (PDF p. 12)
+**Answer:** Answer truthfully. If yes, describe your role in deploying and operating workloads, including manifests/Helm, ingress, identity/secrets, autoscaling, and observability. If not, say so and explain relevant container/Kubernetes knowledge without overstating hands-on experience.
+
+###### 25. How is Application Insights configured in your ecosystem? Can logs for all applications be viewed in one place, or must you use separate URLs/tabs? How do you configure that? (PDF p. 12)
+**Answer:** Instrument each service with Application Insights/OpenTelemetry and route telemetry to a shared or centrally queried Log Analytics workspace, while retaining per-resource access controls and service/environment dimensions. Use Azure Monitor workbooks/dashboards and shared correlation IDs to view cross-service traces; separate resources can still be queried centrally when configured appropriately.
+
+###### 26. How do you configure deployment parameters (number of pods/max pods/min pods) for an App Service Web App/API? Must every app have separate configuration or can they share one? (PDF p. 12)
+**Answer:** The prompt mixes Kubernetes pod terminology with App Service, which scales using App Service plan instances and per-app settings, not Kubernetes pods. For AKS, configure replicas and autoscaling (for example, HPA) in deployment/cluster configuration. Each workload needs an explicit scaling policy, though reusable templates/IaC can centrally define common defaults; validate current App Service scaling limits and plan topology.
+
+---
+
+### Questpond source: 13-azure-interview-questions.md
+
+---
+
+
+
+---
+
+#### Azure interview questions
+
+##### Azure Bus *(PDF p.21)*
+
+The PDF contains the heading “Azure interview questions” followed only by “Azure Bus”; no specific question or product is identified. Assuming this refers to **Azure Service Bus**: it is a managed message broker for reliable asynchronous communication. Queues provide competing-consumer point-to-point delivery; topics/subscriptions provide pub/sub. Use durable messages, dead-letter queues, duplicate detection/idempotency where needed, and lock/settlement handling. If “Azure Bus” meant another service, the source does not clarify.

@@ -1234,3 +1234,65 @@ Expected answer: use a durable queue and worker or separately scalable compute s
 #### 9. Interview summary
 
 > “I use async/await to avoid blocking during I/O, not to disguise CPU work. I use `lock` for short in-process critical sections, `Monitor` for condition signaling, `Mutex` for suitable cross-process single-machine coordination, and `SemaphoreSlim` for async concurrency limits. For durable multi-instance background processing, I use queues or job stores, idempotent handlers, bounded retries, and observability.”
+
+---
+
+## Additional Questpond question sets
+
+### Questpond source: 10-scenario-based-interview-questions.md
+
+---
+
+
+
+---
+
+#### Scenario Based
+
+###### 1. How will you increase performance in an Angular application? (PDF p. 14)
+**Answer:** Measure first with browser profiling and bundle/network diagnostics. Reduce initial bundle size with lazy routes and tree-shakable imports, use `OnPush`/signals and stable tracking for lists, avoid expensive template work, debounce/cancel duplicate requests, and optimize images/caching; validate real-user metrics after each change.
+
+###### 2. For bulk upload of photos/videos, what would your approach be? (PDF p. 14)
+**Answer:** Upload directly to object storage using short-lived, scoped upload URLs, with size/type validation and resumable or chunked transfer for large files. Queue post-upload scanning/transcoding asynchronously, enforce quotas and access controls, and show progress/retry status rather than proxying huge files through the app server.
+
+###### 3. If you find slowness in an Angular application, how will you optimize it? (PDF p. 14)
+**Answer:** Reproduce and profile the slow interaction, separating network, JavaScript, rendering, and change-detection time. Inspect bundle and API payloads, use lazy loading and efficient list tracking, avoid repeated subscriptions/template computations, and optimize the measured bottleneck without weakening correctness.
+
+###### 4. If an abstract `Employee` class has abstract method `GetManager()` and concrete method `GetSalary()`, and `Developer` and `QA` inherit it, a client now requires a `CEO` class with no manager but with a salary, how should you implement the scenario? Should you extend the existing design or change it, and which is optimal? (PDF pp. 14–15)
+**Answer:** A CEO is not a valid subtype if the `Employee` contract requires every employee to have a manager. Refactor the abstraction to model the actual invariant: keep salary/payroll behavior on `Employee`, but represent manager assignment as optional or split a narrower `IHasManager` capability for roles that have one. This avoids a fake manager or an override that throws, while preserving valid existing behaviors.
+
+###### 5. There are two different interfaces, `A` and `B`, and both have a method with the same name. Can class `C` implement both? If yes, how can it use the method from interface `A`? (PDF p. 15)
+**Answer:** Yes. If signatures/semantics align, one public method can implement both. If they need different implementations, implement them explicitly (`void A.Run()` and `void B.Run()`) and invoke the desired one through an `A` or `B` reference/cast.
+
+###### 6. There is a sealed class and I want to add new methods to it without changing its existing logic (PDF p. 15)
+**Answer:** You cannot inherit from the sealed class. Add an extension method in a static class for helper behavior that needs only its public API, or wrap it with composition when stateful behavior/abstraction is needed; neither changes the sealed type itself.
+
+###### 7. Can a class have multiple constructors with different access modifiers and also a static constructor? If yes, in what order do they execute? (PDF p. 15)
+**Answer:** Yes: instance constructors can be overloaded and have different accessibility; there can be at most one static constructor. The static constructor runs at most once before the type is first used (subject to type-initialization rules); then the selected instance constructor runs, with base initialization before the derived constructor body. Private constructors restrict callers but do not change this ordering.
+
+###### 8. If you need to fetch data but the parameter/query string is complex, will you use GET or POST, and why? (PDF p. 15)
+**Answer:** Use GET when the criteria fit safely in a URI and the operation is retrieval, preserving safe/cacheable HTTP semantics. For large or complex search criteria that should not be encoded in a URL, use a documented POST search endpoint with a request body; do not put a body on GET expecting interoperable behavior.
+
+###### 9. How do you increase performance in .NET Core? (PDF p. 15)
+**Answer:** Profile representative workloads first, then address the measured bottleneck: reduce allocations and serialization overhead, use async I/O, optimize database calls and payloads, cache with correct invalidation, and scale appropriately. Load-test and monitor p95/p99 latency, error rate, and resource usage after changes.
+
+###### 10. How do you do bulk insert/update in .NET Core? (PDF p. 15)
+**Answer:** Use provider-native bulk APIs or a bulk library, TVPs/set-based SQL, or batched operations rather than one round trip per entity. Validate in bounded batches, use transactions suited to recovery needs, and verify provider behavior and constraints.
+
+###### 11. How do you limit API hits in .NET Core? (PDF p. 15)
+**Answer:** Configure ASP.NET Core rate-limiting middleware with a policy (for example, token bucket or fixed/sliding window) keyed by authenticated user/tenant or client identity, plus global safeguards. Return `429` and retry information; for multiple instances, use a gateway or distributed coordination when a global limit is required.
+
+###### 12. How do you handle huge payloads that expire in 30 seconds? (PDF p. 15)
+**Answer:** The prompt does not clarify whether “expire” refers to an HTTP timeout, a token/upload URL, or a deadline. In general, avoid sending huge payloads synchronously under a 30-second limit: stream/chunk data to object storage, use a short-lived scoped upload URL if that is what expires, and enqueue asynchronous processing with a status endpoint. Set realistic server/proxy timeouts and define retry/resume behavior.
+
+###### 13. For complex logic, will you use LINQ in .NET Core or SQL in the database? (PDF p. 15)
+**Answer:** Put set-oriented filtering, joins, aggregation, and paging close to the data source, using translatable LINQ or well-designed SQL; keep domain/business rules in the application/domain layer when they need testability and reuse. Inspect generated SQL and choose based on maintainability and measured execution behavior, not a blanket preference.
+
+###### 14. How do you optimize a stored procedure? (PDF p. 15)
+**Answer:** Capture the actual execution plan and runtime metrics, then address scans, poor cardinality estimates, missing/incorrect indexes, excessive reads, implicit conversions, and parameter-sensitive plans. Keep transactions efficient, avoid unnecessary result columns/rows, and retest representative parameter distributions.
+
+###### 15. If asked to create a new project, would you choose code-first or database-first, and why? (PDF p. 15)
+**Answer:** Choose code-first when the application team owns the schema and wants versioned model migrations; choose database-first when an existing/shared database is authoritative or governed separately. Review generated migrations/SQL and agree on schema ownership before choosing.
+
+###### 16. How do you do bulk insert/update in EF Core? (PDF p. 15)
+**Answer:** EF Core's ordinary `AddRange` plus `SaveChanges` can batch commands, but is not always a true bulk-load mechanism. For large datasets use provider-native bulk copy or a vetted bulk extension; for set-based updates use `ExecuteUpdate`/`ExecuteDelete` where supported, or parameterized SQL. Batch, validate, and transaction-bound operations carefully.

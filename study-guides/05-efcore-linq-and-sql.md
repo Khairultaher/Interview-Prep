@@ -3313,3 +3313,263 @@ The explicit full frame is important: without it, `LAST_VALUE` commonly returns 
 - `RANK` leaves gaps after ties; `DENSE_RANK` does not; `ROW_NUMBER` assigns unique sequential numbers.
 - Add a unique tie-breaker to window `ORDER BY` when deterministic row positioning matters.
 - Window-frame clauses work with applicable aggregate/value functions, **not** with `LAG`/`LEAD`.
+
+---
+
+## Additional Questpond question sets
+
+### Questpond source: 06-orm.md
+
+---
+
+
+
+---
+
+#### ORM
+
+##### Theory questions
+
+###### 1. What is an ORM? (PDF p. 10)
+**Answer:** An Object-Relational Mapper maps between application objects and relational database tables, and often translates object queries to SQL. It can reduce routine data-access code, but generated queries and tracking behavior still need review and measurement.
+
+###### 2. Have you used an ORM in your project? Which one? (PDF p. 10)
+**Answer:** Give your actual experience, the ORM and version, and a specific use case. For example: “I used EF Core for transactional CRUD and migrations; I used targeted SQL for reporting queries after measuring that it was more suitable.”
+
+###### 3. What is Dapper? (PDF p. 10)
+**Answer:** Dapper is a lightweight .NET micro-ORM that maps rows from SQL queries to objects. Developers write and control SQL directly; it provides less abstraction/tracking than EF Core and can be useful when precise SQL control is needed.
+
+###### 4. What is EF Core? (PDF p. 10)
+**Answer:** Entity Framework Core is Microsoft's cross-platform ORM for .NET. It maps entity models to database schemas, translates LINQ queries, supports change tracking, migrations, and multiple database providers.
+
+###### 5. EF Core vs. EF 6 (Framework) (PDF p. 10)
+**Answer:** EF Core is the modern, actively developed, cross-platform ORM with a different architecture and feature set. EF 6 (often called EF6) is the older ORM, historically tied to .NET Framework though later versions support modern .NET; they are not drop-in equivalents, so check provider and feature compatibility before migrating.
+
+###### 6. What are navigation properties in EF Core? (PDF p. 10)
+**Answer:** Navigation properties represent relationships between entities, such as `Order.Customer` or `Customer.Orders`. EF Core uses relationship metadata and foreign keys to query and track related entities; related data is loaded explicitly, eagerly, or (when configured) lazily.
+
+###### 7. How did you implement EF Core with a relational database? (PDF p. 10)
+**Answer:** Configure a `DbContext` with a provider and connection configuration, define entities/relationships and constraints, register the context with dependency injection, and use migrations or an approved schema process. Keep contexts short-lived (usually scoped per request) and parameterize external input.
+
+###### 8. Which approach did you follow in your project? (PDF p. 10)
+**Answer:** State the actual approach—code-first, database-first, or an existing-schema mapping—and explain why it fit ownership, migration control, and team workflow. For a shared/legacy schema, coordinate migrations with DBAs; for an application-owned schema, migrations can provide an auditable evolution path.
+
+###### 9. Code first vs. database first (PDF p. 10)
+**Answer:** Code-first treats the model and migrations as the main schema definition; database-first starts from an existing schema and generates/matches model classes. Choose based on schema ownership and governance; both require reviewed schema changes and testing.
+
+###### 10. Commands used for code first (PDF p. 10)
+**Answer:** Common EF Core CLI commands include `dotnet ef migrations add MigrationName`, `dotnet ef database update`, and `dotnet ef migrations list`; `dotnet ef migrations script` generates a deployable SQL script. Install/use the EF CLI tool and provider appropriate to the project.
+
+###### 11. What are Fluent APIs? (PDF p. 11)
+**Answer:** Fluent APIs configure model metadata through chained method calls. In EF Core, `OnModelCreating` and `IEntityTypeConfiguration<T>` can define keys, relationships, indexes, constraints, and conversions when attributes are insufficient or configuration should remain outside entity classes.
+
+###### 12. How do you call a stored procedure from EF Core? (PDF p. 11)
+**Answer:** Use parameterized APIs: `FromSql`/`FromSqlInterpolated` for a query returning mapped entities, or `Database.ExecuteSql`/`ExecuteSqlInterpolated` for commands, using the APIs supported by the EF Core version. Avoid concatenating untrusted values into SQL and account for provider-specific procedure syntax.
+
+###### 13. What is lazy loading? (PDF p. 11)
+**Answer:** Lazy loading fetches related data when a navigation property is accessed, usually through proxies or injected loaders. It can simplify access but may trigger hidden queries and N+1 performance problems; use deliberately and inspect generated SQL.
+
+###### 14. Eager loading in EF Core (PDF p. 11)
+**Answer:** Eager loading retrieves related data as part of the initial query, using `Include`/`ThenInclude` or projections. It reduces later round trips but can produce large joins or duplicate rows; project only the required data and consider split queries when appropriate.
+
+###### 15. Tracking and no-tracking in EF Core (PDF p. 11)
+**Answer:** Tracking queries keep entities in the change tracker so modifications can be persisted with `SaveChanges`. `AsNoTracking()` avoids tracking overhead for read-only results; use tracking when the loaded entities will be edited through that context.
+
+###### 16. Can we handle transactions in EF Core? (PDF p. 11)
+**Answer:** Yes. A single `SaveChanges` is transactional when supported by the provider. For multiple operations, use `Database.BeginTransactionAsync()` and commit/rollback; consider execution strategies/retries and avoid holding transactions open longer than necessary.
+
+###### 17. What is an explicit transaction? (PDF p. 11)
+**Answer:** An explicit transaction is one the application starts and controls across one or more database operations, committing only when all succeed and rolling back on failure. It is needed when several operations must be atomic beyond one `SaveChanges` call.
+
+---
+
+### Questpond source: 08-sql.md
+
+---
+
+
+
+---
+
+#### SQL
+
+##### Theory questions
+
+###### 1. What is normalization? State its forms. (PDF p. 12)
+**Answer:** Normalization organizes relational data to reduce redundancy and update anomalies. Common forms: 1NF (atomic values/no repeating groups), 2NF (1NF and no partial dependency on part of a composite key), 3NF (2NF and no inappropriate transitive dependency on a key), and BCNF (every determinant is a candidate key).
+
+###### 2. What is Boyce–Codd normal form? (PDF p. 12)
+**Answer:** BCNF requires every nontrivial functional dependency `X → Y` to have `X` as a superkey. It is stricter than 3NF and can remove certain anomalies left by 3NF.
+
+###### 3. Indexes in SQL (PDF p. 12)
+**Answer:** An index is an auxiliary structure that speeds up data lookup/order at the cost of storage and extra work on writes. Choose keys/includes and filtered indexes from observed query patterns, inspect actual execution plans, and avoid excessive or redundant indexes.
+
+###### 4. Clustered vs. nonclustered index (PDF p. 12)
+**Answer:** In SQL Server, a clustered index defines the row-storage ordering at the leaf level, so a table has at most one. A nonclustered index is a separate lookup structure with key and row locator; a table can have multiple, each adding storage and write cost.
+
+###### 5. What is an execution plan? (PDF p. 12)
+**Answer:** An execution plan describes the operators and strategy the database engine chose to execute a query, including scans/seeks, joins, and estimates/actuals. Use actual plans and runtime statistics to investigate bottlenecks, while treating estimates as estimates rather than proof.
+
+###### 6. Primary key vs. unique constraint (PDF p. 12)
+**Answer:** Both enforce uniqueness. A table has one primary key, which identifies its rows and cannot contain `NULL`; it may be composite. A table can have multiple unique constraints/indexes, whose treatment of `NULL` is DBMS-specific (SQL Server permits one `NULL` per ordinary unique key unless a filtered index is used).
+
+###### 7. `UNION` vs. `UNION ALL` (PDF p. 12)
+**Answer:** Both combine compatible result sets. `UNION` removes duplicate rows, usually requiring extra work; `UNION ALL` retains duplicates and is generally cheaper when de-duplication is unnecessary.
+
+###### 8. `ISNULL` vs. `COALESCE` (PDF p. 12)
+**Answer:** Both can replace null values. SQL Server `ISNULL` is a two-argument function whose result type is based on its first argument; `COALESCE` accepts multiple expressions and follows `CASE` type-precedence rules, and may evaluate expressions more than once. Choose with type/side-effect behavior in mind.
+
+###### 9. `TRUNCATE` vs. `DELETE` (PDF p. 12)
+**Answer:** `DELETE` removes selected rows and supports a `WHERE` clause; it logs row deletions and fires applicable delete triggers. `TRUNCATE TABLE` removes all rows by deallocating pages, is generally faster, resets identity in SQL Server, and has restrictions such as foreign-key references; transaction and logging details are engine-specific.
+
+###### 10. Table vs. view (PDF p. 12)
+**Answer:** A table stores data. A view is a saved query that presents data from one or more tables and generally stores no result rows, although indexed/materialized view features can store indexed results. Views can simplify access but are not automatically a security boundary.
+
+###### 11. Stored procedure vs. function (PDF p. 12)
+**Answer:** A stored procedure is invoked as a command and can perform procedural work and return result sets/output parameters. A function returns a scalar or table value and is generally subject to restrictions on side effects and invocation context. Exact rules vary by database engine.
+
+###### 12. What is a CTE? (PDF p. 12)
+**Answer:** A common table expression is a named query expression scoped to a single statement, introduced with `WITH`; it can improve readability and may be recursive. A CTE is not inherently materialized or indexed.
+
+###### 13. Temporary table vs. CTE (PDF p. 12)
+**Answer:** A CTE is scoped to one statement and is useful for structuring a query; it normally has no separately managed indexes/statistics. A temporary table persists for its session/scope, can be reused across statements and indexed, but adds creation/storage overhead. Choose based on reuse, cardinality, and plan behavior.
+
+###### 14. Temporary table vs. table variable (PDF p. 12)
+**Answer:** Both hold temporary data. SQL Server temp tables generally support richer indexing and statistics and often suit larger/intermediate datasets; table variables have different scope/optimization behavior and may suit small/simple sets. Modern SQL Server behavior varies by version, so benchmark the actual query.
+
+###### 15. Subqueries vs. CTE (PDF p. 12)
+**Answer:** Both express nested query logic; many optimizers transform them into equivalent plans. A CTE can make multi-step or recursive logic easier to read, while a subquery is concise for local expressions. Neither is automatically faster solely because of its syntax.
+
+###### 16. SQL injection and how will you prevent it? (PDF p. 12)
+**Answer:** SQL injection occurs when untrusted input is interpreted as executable SQL. Use parameterized queries/prepared statements or safe ORM APIs, allowlist dynamic identifiers/sort options, apply least-privilege DB access, and avoid concatenating user input into SQL.
+
+###### 17. Triggers in SQL; what is their purpose? (PDF p. 12)
+**Answer:** A trigger runs automatically in response to database events such as insert/update/delete. It can enforce certain database-level rules or record auditing, but hidden side effects and multi-row behavior make triggers harder to maintain; use explicit application logic or constraints where suitable.
+
+###### 18. What is `ROW_NUMBER`? (PDF p. 12)
+**Answer:** `ROW_NUMBER()` is a window function assigning a unique sequential number within each partition according to an `ORDER BY`. Use a deterministic tie-breaker if stable row numbering matters.
+
+###### 19. `RANK` vs. `DENSE_RANK` (PDF p. 12)
+**Answer:** Both assign equal ranks to ties within a partition. `RANK` leaves gaps after tied positions (1, 1, 3); `DENSE_RANK` does not (1, 1, 2).
+
+###### 20. What is a partition? (PDF p. 12)
+**Answer:** In a window function, `PARTITION BY` divides rows into independent groups over which the function is evaluated. Database table partitioning is a separate physical-storage feature; clarify which meaning is intended.
+
+###### 21. Ties (PDF p. 12)
+**Answer:** Ties occur when rows have equal values under the ranking/order expression. `RANK`/`DENSE_RANK` assign equal ranks; `ROW_NUMBER` still assigns distinct numbers. Add a tie-breaker only when a deterministic ordering is required.
+
+###### 22. What are magic tables? (PDF p. 12)
+**Answer:** In SQL Server trigger terminology, `inserted` and `deleted` are logical transition tables containing affected rows—new values and old values respectively, depending on operation. Triggers must handle multiple rows rather than assuming a single row.
+
+###### 23. What is a deadlock? (PDF p. 12)
+**Answer:** A deadlock occurs when concurrent transactions wait in a cycle for resources held by each other; the engine selects a victim and rolls it back. Reduce risk with consistent access order, short transactions, suitable indexes/isolation, and retry handling for deadlock victims.
+
+###### 24. What is `WITH (NOLOCK)`? (PDF p. 12)
+**Answer:** In SQL Server, `NOLOCK` is equivalent to `READ UNCOMMITTED` for a table reference. It can return dirty, missing, or duplicated rows and does not eliminate all blocking; use row-versioning isolation (such as RCSI) or a different design when appropriate rather than treating it as a harmless performance switch.
+
+###### 25. What is an isolation level? (PDF p. 12)
+**Answer:** An isolation level controls how concurrent transactions may observe each other's changes and which anomalies are possible. SQL Server options include Read Uncommitted, Read Committed, Repeatable Read, Snapshot, and Serializable; stronger isolation can reduce anomalies but increase contention or version-store use.
+
+###### 26. What is a transaction and how do you implement it? (PDF p. 12)
+**Answer:** A transaction groups operations into a unit with atomicity and consistency expectations, isolated according to its configured level and committed durably on success. Use `BEGIN TRANSACTION`, `COMMIT`, and `ROLLBACK` (or client transaction APIs), handle errors, and keep the transaction scope short.
+
+###### 27. `MERGE` statement (PDF p. 13)
+**Answer:** SQL Server `MERGE` matches source and target rows and can apply insert/update/delete actions in one statement. It can be convenient but has concurrency and implementation caveats; test carefully, use correct locking/constraints, and consider separate statements when safer or clearer.
+
+###### 28. How do you send unlimited parameters through stored procedures? (PDF p. 13)
+**Answer:** A procedure cannot practically accept an unlimited list of scalar parameters. For variable-length input, pass a table-valued parameter (SQL Server), a structured JSON/XML payload, or stage the data and pass a batch identifier; enforce size limits and validate the payload.
+
+###### 29. How do you optimize queries returning 100 million records? (PDF p. 13)
+**Answer:** First question whether all 100 million rows must be returned; paginate or stream only required columns and filter at the source. Review actual plans, indexes, statistics, partitioning and parallelism, use bulk/export or analytical pipelines for full extracts, and measure network, client memory, and end-to-end throughput. Do not load the entire result into application memory.
+
+---
+
+### Questpond source: 11-sql-scenarios.md
+
+---
+
+
+
+---
+
+#### SQL scenarios
+
+##### Employee names with a duplicated mobile number *(PDF pp.18–19)*
+
+Given the `EmpName` and `MobileNo` rows, return names whose number occurs more than once:
+
+```sql
+SELECT e.EmpName
+FROM Employee AS e
+WHERE e.MobileNo IN (
+    SELECT MobileNo
+    FROM Employee
+    GROUP BY MobileNo
+    HAVING COUNT(*) > 1
+)
+ORDER BY e.EmpName;
+```
+
+For the supplied data this returns `A, B, D, E, F, H`. The PDF's stated output also includes `C`, but `C`'s number (`8999999999`) occurs only once; that listed output conflicts with the table. `G` is also unique.
+
+##### Count consumers by orders/refills between April 1 and June 30, 2023, including zero *(PDF pp.19–20)*
+
+Count orders for each consumer in the inclusive date interval, then group consumers by that count. `LEFT JOIN` keeps consumers with no matching orders. The half-open date range also works when `DeliverDate` is a timestamp.
+
+```sql
+WITH PerConsumer AS
+(
+    SELECT c.Id AS ConsumerId, COUNT(o.OrderId) AS RefillCount
+    FROM tblConsumer AS c
+    LEFT JOIN tblCustomer AS o
+      ON o.ConsumerId = c.Id
+     AND o.DeliverDate >= '2023-04-01'
+     AND o.DeliverDate <  '2023-07-01'
+    GROUP BY c.Id
+)
+SELECT RefillCount, COUNT(*) AS ConsumerCount
+FROM PerConsumer
+GROUP BY RefillCount
+ORDER BY RefillCount;
+```
+
+Expected output:
+
+| RefillCount | ConsumerCount |
+|---:|---:|
+| 0 | 2 |
+| 2 | 2 |
+| 3 | 1 |
+| 5 | 1 |
+
+The range includes both April 1 and June 30. There is no row for a refill count of 4 because no consumer has four orders in that interval.
+
+##### Find duplicate records in a table *(PDF p.23)*
+
+The source does not specify a table or which columns define a duplicate. Group by the business-key columns and retain groups occurring more than once; for example:
+
+```sql
+SELECT ColumnA, ColumnB, COUNT(*) AS DuplicateCount
+FROM dbo.YourTable
+GROUP BY ColumnA, ColumnB
+HAVING COUNT(*) > 1;
+```
+
+Replace `ColumnA, ColumnB` with the columns that define duplicate identity. To retrieve every full row in duplicate groups, join this grouped result back to the table on those key columns.
+
+##### Find the Nth highest salary *(PDF p.22)*
+
+Assumption: “Nth highest” means the Nth **distinct** salary. `DENSE_RANK` gives ties the same rank:
+
+```sql
+WITH Ranked AS
+(
+    SELECT Salary, DENSE_RANK() OVER (ORDER BY Salary DESC) AS SalaryRank
+    FROM Employee
+)
+SELECT DISTINCT Salary
+FROM Ranked
+WHERE SalaryRank = @N;
+```
+
+If the intended meaning is the Nth row including duplicate salaries, use `ROW_NUMBER()` with a deterministic tie-breaker instead.

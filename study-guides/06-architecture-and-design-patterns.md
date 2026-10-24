@@ -2067,3 +2067,207 @@ For each architecture or performance question, answer in this order:
 #### Final advice
 
 Avoid absolute statements such as “async always makes an API faster,” “microservices are always more scalable,” or “`ConfigureAwait(false)` always switches to a ThreadPool thread.” Senior-level answers explain the conditions, trade-offs, and failure modes, and show how to validate decisions with measurements.
+
+---
+
+## Additional Questpond question sets
+
+### Questpond source: 09-design-pattern-architecture.md
+
+---
+
+
+
+---
+
+#### Design Pattern and Architecture
+
+##### Design patterns
+
+###### 1. Sometimes they ask you to write code, such as Singleton pattern code, so try to attempt it (PDF p. 13)
+**Answer:** A thread-safe C# singleton can use a static readonly instance: `public sealed class AppSettings { private static readonly Lazy<AppSettings> _instance = new(() => new AppSettings()); private AppSettings() {} public static AppSettings Instance => _instance.Value; }`. Use this only when a single shared instance is actually appropriate; dependency injection is often easier to test.
+
+###### 2. What is a design pattern and why do we need it? (PDF p. 13)
+**Answer:** A design pattern is a reusable description of a solution to a recurring design problem, not a ready-made code template. Patterns provide shared vocabulary and trade-offs, but should be used only when they make the design clearer.
+
+###### 3. Types of design pattern: creational, structural, behavioral (PDF p. 13)
+**Answer:** Creational patterns address object creation (Factory, Builder); structural patterns organize objects/classes (Adapter, Decorator); behavioral patterns organize communication and responsibilities (Strategy, Observer). The categories help identify a pattern's main design concern.
+
+###### 4. Which design patterns have you used in your project? (PDF p. 13)
+**Answer:** Name only patterns you actually used and explain the problem and trade-off. For example, “I used Strategy to select a pricing rule without a large conditional; it made adding rules easier, though each strategy added a small class.”
+
+###### 5. Which design patterns do you know? (PDF p. 13)
+**Answer:** Be ready to explain a few relevant patterns rather than reciting a list. Examples include Factory/Builder, Adapter/Decorator, Strategy/Observer, Repository, and CQRS; give each pattern's purpose and one suitable use case.
+
+###### 6. What is the Singleton design pattern? Write the Singleton pattern. (PDF p. 13)
+**Answer:** Singleton controls construction so a type exposes one shared instance within a defined scope. The `Lazy<T>` implementation in answer 1 is thread-safe for initialization; in dependency injection, register with `AddSingleton<T>()` when one container-wide instance is intended. A process-wide static is not necessarily one instance across processes or load contexts.
+
+###### 7. Connection pooling: many answers use Singleton, but that can be problematic, especially from the database perspective (PDF p. 13)
+**Answer:** Database connection pooling is normally provided by the database driver/provider and reuses physical connections behind short-lived logical connections. Do not keep one open `DbConnection` as a singleton; open it for an operation and dispose it promptly so the pool can manage reuse and concurrency safely.
+
+###### 8. Singleton pattern disadvantage (PDF p. 13)
+**Answer:** A singleton introduces global mutable state, hidden dependencies, lifecycle coupling, and test interference; it can also become a contention point. Use a scoped lifetime or dependency injection with explicit ownership when possible.
+
+###### 9. “Breaking the Singleton using direct references. Iterator, IEnumerable” (PDF p. 13)
+**Answer:** This source prompt is ambiguous: direct references and `Iterator`/`IEnumerable` appear together without an explicit question. A reference to a singleton does not create another instance, but exposing mutable state can violate its invariants; keep construction private and expose narrow operations/read-only views. `IEnumerable<T>` represents a sequence and an iterator produces its values, neither is itself a singleton-breaking mechanism.
+
+###### 10. What is the Strategy design pattern? (PDF p. 13)
+**Answer:** Strategy encapsulates interchangeable algorithms behind a common interface and selects one at runtime. For example, a checkout service can receive a card, wallet, or bank-transfer payment strategy without embedding each algorithm in one conditional.
+
+###### 11. What is the Adapter design pattern? (PDF p. 13)
+**Answer:** Adapter wraps an incompatible class behind the interface a client expects. For example, an adapter can translate a third-party shipping API's methods and data into the application's `IShippingService` contract.
+
+###### 12. What is the Abstract Factory design pattern? (PDF p. 13)
+**Answer:** Abstract Factory creates families of related objects through an interface without exposing their concrete classes. For example, a theme factory can create matching light-theme buttons and dialogs; use it when families must vary together.
+
+###### 13. What is the Repository pattern? List its advantages. (PDF p. 13)
+**Answer:** A repository provides a collection-like abstraction for querying and persisting domain data. It can isolate persistence concerns and support focused tests, but a generic repository that merely wraps every ORM method can hide useful query capabilities and add little value.
+
+###### 14. What is the CQRS design pattern? (PDF p. 13)
+**Answer:** Command Query Responsibility Segregation separates operations that change state (commands) from those that read state (queries). They may share a database; separate models/stores are optional and add consistency and operational complexity.
+
+###### 15. What are the three important elements? (PDF p. 13)
+**Answer:** This is listed immediately after the CQRS question, so it likely asks for CQRS's elements: commands (request a state change), queries (read without changing state), and the separation between their models/handling paths. The source does not specify this context explicitly.
+
+###### 16. Why is MediatR used in CQRS? (PDF p. 13)
+**Answer:** MediatR is a .NET in-process mediator library that can route commands/queries to handlers and compose pipeline behaviors such as validation or logging. It is optional, not required for CQRS, and should not be added when direct calls are clearer.
+
+###### 17. Why is CQRS important in Microsoft? (PDF p. 13)
+**Answer:** CQRS is not a mandatory Microsoft platform feature; it is a design choice used in Microsoft and other ecosystems when read and write concerns differ. It can support independent models/scaling, but increases complexity and is unnecessary for many CRUD systems.
+
+###### 18. What is Event Sourcing in CQRS? (PDF p. 13)
+**Answer:** Event Sourcing stores an append-only sequence of domain events as the source of truth, then reconstructs state by replaying events or using snapshots. In a CQRS system, projections may serve queries; eventual consistency, schema evolution, replay, and privacy/retention require careful design.
+
+###### 19. Is SQL Server an event source? (PDF p. 13)
+**Answer:** A standard SQL Server table storing the latest row state is not Event Sourcing. SQL Server can store an append-only event log, but the application must model and treat events as the authoritative history; features such as temporal tables or CDC are not automatically equivalent to an event store.
+
+###### 20. Have you worked on Clean Architecture? (PDF p. 13)
+**Answer:** Answer from real experience. Clean Architecture separates domain/application policy from infrastructure and delivery details, with dependencies pointing inward; mention how interfaces, tests, and dependency injection supported that separation and where the approach's extra structure was justified.
+
+##### Architecture and distributed systems
+
+###### 1. What are microservices? (PDF p. 13)
+**Answer:** Microservices are independently deployable services organized around business capabilities, communicating over defined boundaries. They bring deployment and scaling autonomy but require operational maturity, distributed observability, and explicit data/consistency strategies.
+
+###### 2. Monolithic vs. microservices (PDF p. 13)
+**Answer:** A monolith packages the application as one deployable unit, often simplifying local development and transactions. Microservices split capabilities into independent services, enabling separate deployment/scaling but adding network failure, operations, and data-consistency complexity; start with the simplest design that meets needs.
+
+###### 3. Layer vs. tiered (PDF p. 13)
+**Answer:** A layer is a logical separation of responsibilities in code (for example, presentation, application, data access). A tier is a physical/deployment boundary, often on separate processes or machines. Layers need not be deployed separately; tiers usually are.
+
+###### 4. Tier and N-tier difference (PDF p. 13)
+**Answer:** A tier is one physical deployment boundary. N-tier describes an architecture with multiple such tiers (the “N” is the number of tiers), for example web, application, and database tiers; it is distinct from logical code layers.
+
+###### 5. How does one microservice call another internally (queues, Web API)? (PDF p. 13)
+**Answer:** Use synchronous HTTP/gRPC when the caller needs an immediate response, or asynchronous messaging when decoupling, buffering, and eventual completion are preferable. Define timeouts, retries, idempotency, authentication, contracts, and tracing for either approach.
+
+###### 6. Two microservices: Service 2 needs Service 1's data. How can they share it? If using a Web API, how do we authenticate between services? (PDF p. 13)
+**Answer:** Prefer Service 1's API or published events rather than direct access to its private database; replicate a read model when latency/availability warrants it. Authenticate service-to-service with workload identity/OAuth client credentials or mutual TLS, authorize narrowly per service, and rotate credentials/tokens securely.
+
+###### 7. Strategic DDD vs. Tactical DDD (PDF p. 13)
+**Answer:** Strategic Domain-Driven Design defines the domain, subdomains, bounded contexts, and context relationships. Tactical DDD models a bounded context with building blocks such as entities, value objects, aggregates, repositories, and domain services.
+
+###### 8. What are a domain and subdomain? (PDF p. 13)
+**Answer:** A domain is the business problem space an organization operates in. A subdomain is a distinct area within it, such as billing within commerce, with its own concepts and rules.
+
+###### 9. Types of subdomain (PDF p. 13)
+**Answer:** DDD commonly classifies subdomains as core (the differentiating business capability), supporting (necessary but not differentiating), and generic (common capability often available as an off-the-shelf solution). Prioritize investment in the core domain.
+
+###### 10. Bounded context, context map, and UL (PDF p. 13)
+**Answer:** A bounded context is a boundary within which a domain model and its language have consistent meaning. A context map describes relationships/integration between contexts. “UL” likely means ubiquitous language: the shared vocabulary used by domain experts and developers within a context.
+
+###### 11. What is a Saga pattern? (PDF p. 13)
+**Answer:** A Saga coordinates a long-running business transaction across services as a sequence of local transactions, with compensating actions for failures. Coordination can be orchestration- or choreography-based; compensation is a business action, not a guaranteed rollback of already observed effects.
+
+###### 12. What is DDD? (PDF p. 13)
+**Answer:** Domain-Driven Design is an approach to building software around a deep model of the business domain, using collaboration with domain experts, ubiquitous language, bounded contexts, and tactical modeling where complexity warrants it.
+
+###### 13. What are entities, value objects, and services? (PDF p. 13)
+**Answer:** An entity has identity that persists as its attributes change. A value object is defined by its values and is preferably immutable. A domain service represents domain behavior that does not naturally belong to one entity or value object.
+
+###### 14. What is an aggregate root? (PDF p. 13)
+**Answer:** An aggregate root is the externally accessible entity that protects invariants across an aggregate. Other aggregate members are changed through the root, and transactions should generally preserve invariants within one aggregate boundary.
+
+###### 15. CQRS pattern (PDF p. 14)
+**Answer:** CQRS separates command handling from query handling and their models. It can simplify distinct read/write needs, but separate stores introduce synchronization and eventual-consistency challenges, so basic CRUD often does not need it.
+
+###### 16. Repository (PDF p. 14)
+**Answer:** A repository abstracts persistence operations for a domain concept or aggregate. Keep its interface aligned to domain use cases; do not add one solely to conceal an ORM if it makes querying less clear.
+
+###### 17. Queues (PDF p. 14)
+**Answer:** A queue buffers messages for asynchronous processing, allowing producers and consumers to operate independently. Design for at-least-once delivery, idempotent consumers, retries, poison/dead-letter messages, and monitoring of queue depth/age.
+
+###### 18. Draw an infrastructure diagram (PDF p. 14)
+**Answer:** A concise example is: `Browser/Mobile → WAF/API Gateway → Web/API services → (per-service database)` with `Service Bus/Event Grid` for asynchronous communication, and shared `Identity`, `Key Vault`, `Monitor/Logs`, and private networking. Draw trust boundaries, data stores, protocols, and scaling/availability zones relevant to the scenario.
+
+###### 19. How do you decide between GraphQL and the Backend for Frontend (BFF) pattern? (PDF p. 14)
+**Answer:** GraphQL provides a typed query language letting clients request shaped data through a graph API, useful when varied clients need flexible composition. A BFF provides a tailored server-side API per client experience, with more explicit control over orchestration and security. They can coexist; choose based on client needs, governance, caching, and complexity.
+
+###### 20. How do you optimize costs in an Azure Cloud microservices architecture? (PDF p. 14)
+**Answer:** Attribute costs by service/environment, right-size resources, autoscale against measured demand, remove idle/nonproduction capacity, and use suitable managed/serverless or commitment options. Reduce excessive telemetry/data transfer and storage retention, and set budgets/alerts while preserving reliability and security targets.
+
+###### 21. How do you implement the Rate Limiting pattern to isolate resource failures? (PDF p. 14)
+**Answer:** Apply limits at service boundaries (per caller/tenant/operation) and use bounded concurrency, queues, timeouts, and load shedding to prevent overload from cascading. Return `429`/`503` with retry guidance, isolate dependencies with bulkheads, and use circuit breakers for repeated dependency failures.
+
+###### 22. What is the role of Consumer-Driven Contracts (CDC) in preventing breaking changes? (PDF p. 14)
+**Answer:** Consumers publish expectations for the provider's API/event contract; providers verify those contracts in CI before release. CDC catches compatibility regressions early, but should complement backward-compatible evolution, schema validation, and integration testing.
+
+###### 23. How do you handle reference data (e.g., countries, currencies): replicate or query? (PDF p. 14)
+**Answer:** Query a source of truth when freshness and centralized governance are critical and latency/dependency risk is acceptable. Replicate or cache versioned reference data when low latency/availability matters; define ownership, refresh/invalidation, and consistency expectations.
+
+###### 24. When is the Anti-Corruption Layer (ACL) pattern essential? (PDF p. 14)
+**Answer:** Use an ACL when integrating with a legacy or external model whose concepts should not leak into your domain. The translation boundary protects your model and contract, at the cost of mapping and maintenance work.
+
+###### 25. When do you need a distributed lock vs. optimistic concurrency? (PDF p. 14)
+**Answer:** Prefer optimistic concurrency (version/ETag compare-and-swap) when conflicts are relatively rare and can be detected/retried. Use a distributed lock only when work must be mutually exclusive and cannot be safely expressed optimistically; locks need leases, fencing tokens, and failure recovery to avoid stale owners.
+
+###### 26. What specific challenges does Event Sourcing introduce in microservices? (PDF p. 14)
+**Answer:** It adds event schema evolution, replay/versioning, ordering, idempotency, eventual consistency, projection rebuilding, storage/retention, and privacy-erasure challenges. It also requires operational expertise and must not be chosen merely to retain an audit trail that simpler append-only auditing can provide.
+
+###### 27. How do you manage schema versioning for events in an Event-Driven Architecture? (PDF p. 14)
+**Answer:** Prefer additive backward-compatible changes, version schemas/contracts explicitly, and ensure consumers tolerate unknown optional fields. Use a schema registry or contract checks, support old/new versions during migration, and test replay and mixed-version deployments.
+
+###### 28. When is CQRS necessary versus over-engineering? (PDF p. 14)
+**Answer:** It is justified when read and write models have substantially different needs, scale independently, or need specialized projections/workflows. It is over-engineering for straightforward CRUD where separate handlers/stores add deployment and consistency overhead without a measurable benefit.
+
+###### 29. How do you securely inject secrets into services at runtime? (PDF p. 14)
+**Answer:** Prefer workload/managed identity and short-lived credentials; retrieve secrets from a managed vault at runtime or through a secure platform integration. Restrict access by service and environment, rotate/audit, prevent secret logging, and never bake secrets into source, images, or ordinary deployment manifests.
+
+###### 30. What strategies do you use for distributed rate limiting? (PDF p. 14)
+**Answer:** Use a shared gateway/service limiter or a distributed counter/state store with atomic updates and a defined algorithm such as token bucket. Set keys by tenant/user/route, handle store failure explicitly, and combine global limits with per-instance concurrency controls.
+
+###### 31. Multi-tenancy: silo model vs. pool model (PDF p. 14)
+**Answer:** Silo gives each tenant dedicated infrastructure/data, providing stronger isolation and customization at higher cost. Pool shares infrastructure/data structures, improving utilization but requiring rigorous tenant isolation and noisy-neighbor controls. Hybrid designs can isolate high-risk or high-scale tenants.
+
+###### 32. Pros and cons of client-side vs. server-side service discovery (PDF p. 14)
+**Answer:** Client-side discovery lets callers query a registry and choose instances, providing direct routing but distributing discovery logic across clients. Server-side discovery uses a load balancer/proxy to resolve instances, simplifying clients but adding infrastructure and a hop. Choose based on platform support and operational model.
+
+###### 33. How do you handle time synchronization and clock skew across distributed nodes? (PDF p. 14)
+**Answer:** Synchronize hosts with reliable time services, store timestamps in UTC, and avoid assuming clocks are perfectly ordered. Use monotonic clocks for elapsed durations, database/sequence versions or explicit causal metadata for ordering, and tolerate bounded skew in token/expiry logic.
+
+###### 34. How do you manage long-running processes without holding open HTTP connections? (PDF p. 14)
+**Answer:** Accept the request, validate and enqueue a durable job, then return `202 Accepted` with a job/status resource or callback details. Process asynchronously with idempotency, retries, cancellation, progress/status reporting, and dead-letter handling.
+
+###### 35. What is your strategy for Canary Deployments in a dependent chain of services? (PDF p. 14)
+**Answer:** Deploy backward-compatible contracts first, then canary one service/version with controlled traffic and telemetry gates. Coordinate dependent services using version-tolerant APIs/events, gradually shift traffic, halt/rollback on SLO regressions, and avoid simultaneous incompatible migrations.
+
+###### 36. How do you design a robust strategy for distributed cache invalidation? (PDF p. 14)
+**Answer:** Define ownership and staleness tolerance, use TTLs as a bound, and publish invalidation/version events on writes when prompt refresh is needed. Consider cache-aside with versioned keys and idempotent consumers; design for missed events, replication delay, and cache outages.
+
+###### 37. How do you implement Leader Election for singleton background tasks? (PDF p. 14)
+**Answer:** Use a reliable distributed coordination service or lease-based lock with expiry and fencing tokens, so only the current leader's work is accepted. Make jobs idempotent, renew leases safely, and handle process pauses/network partitions; a static singleton only works inside one process.
+
+###### 38. How does the CAP theorem practically influence your choice of data stores per service? (PDF p. 14)
+**Answer:** During a network partition, a distributed system must trade off immediate consistency against availability; CAP does not mean choosing only two properties in every normal operating condition. Select a store and consistency model based on each service's invariants, partition tolerance, and recovery needs.
+
+###### 39. How does Conway's Law influence team structure and service boundaries? (PDF p. 14)
+**Answer:** Systems tend to reflect the communication structures of the organizations that build them. Align team ownership and communication paths with cohesive service boundaries, but validate boundaries against domain responsibilities and avoid splitting services solely to mirror an org chart.
+
+###### 40. How do you manage a Shared Kernel without creating tight coupling? (PDF p. 14)
+**Answer:** Keep the shared model small and stable, assign clear joint ownership, version it deliberately, and require compatibility tests. If teams need independent evolution, publish explicit contracts or duplicate a small piece of reference data rather than sharing an ever-growing codebase.
+
+###### 41. How do you apply Chaos Engineering to validate system recovery? (PDF p. 14)
+**Answer:** Form a measurable hypothesis about a failure mode, run a bounded experiment in a safe environment or controlled production scope, and monitor user-impacting indicators. Test realistic dependency/instance failures, maintain abort conditions, and use findings to improve recovery before expanding experiments.
+
+###### 42. How do you detect and solve the N+1 problem in distributed service calls? (PDF p. 14)
+**Answer:** Use distributed traces and call-count/latency metrics to identify one request causing many downstream calls. Replace per-item requests with batch APIs, aggregation, or suitable local projections/caching; preserve authorization and freshness requirements and verify the change with load tests.

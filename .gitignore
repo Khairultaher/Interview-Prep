@@ -1,4 +1,4 @@
-/source/
 /.vscode/
 *.pdf
+!/source/**/*.pdf
 *.docx

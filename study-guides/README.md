@@ -18,6 +18,7 @@ A topic-organized library compiled from the Markdown and PDF materials in `../so
 12. [Angular interview questions](11-angular-interview-questions.md)
 13. [Azure DevOps, Docker, and Kubernetes / AKS](12-azure-devops-docker-kubernetes.md)
 14. [Azure cloud administration for backend developers](13-azure-cloud-administration-for-backend.md)
+15. [Questpond employer interviews and full PDF question bank](15-questpond-employer-interviews-and-full-pdf.md)
 
 ## Completeness and duplicate handling
 
@@ -37,14 +38,18 @@ The Azure DevOps, Docker, and Kubernetes guide consolidates deployment, CI/CD, c
 
 The Azure cloud-administration guide uses Azure services and project examples named in the H1B CV, then adds administration context. The backend viva file itself contains backend topics, not an inventory of Azure services.
 
+The Questpond folder has also been audited end-to-end. Its complete topic-specific Markdown question sets are included in their matching guides; all employer-specific interview notes and all 70 extracted pages from `RealTimeInterviewQuestions.pdf` are preserved in the Questpond interview archive. `settings.json` is workspace configuration, not interview-preparation material, so it is not included.
+
 ## Source coverage
 
 ### [Study Roadmap and Interview Strategy](00-study-roadmap.md)
 
-- Combined from `senior_dotnet_refined_roadmap.md` and `senior_dotnet_interview_guide.md` as one study guide
+- `senior_dotnet_refined_roadmap.md`
 
 ### [C# Language and Code Quality](01-csharp-language-and-quality.md)
 
+- `B:\TUTS\Questpond\01-oop-solid.md`
+- `B:\TUTS\Questpond\02-csharp.md`
 - `modern-csharp-senior-architect-interview-guide.md`
 - `csharp_data_types_and_collections_cheatsheet.md`
 - `senior_csharp_code_review_refactoring_interview_guide.md`
@@ -52,6 +57,8 @@ The Azure cloud-administration guide uses Azure services and project examples na
 
 ### [Data Structures and Algorithms](02-data-structures-and-algorithms.md)
 
+- `B:\TUTS\Questpond\10-scenario-based.md`
+- `B:\TUTS\Questpond\12-coding-questions.md`
 - `csharp-data-structures-sorting-interview-cheatsheet.md`
 - `algorithmic_techniques_guide.md`
 - `C# Data Structures Guide.pdf`
@@ -71,14 +78,20 @@ The Azure cloud-administration guide uses Azure services and project examples na
 
 ### [Web APIs, HTTP, and Identity](04-web-apis-http-and-identity.md)
 
+- `B:\TUTS\Questpond\05-dotnet-core-web-api.md`
+- `B:\TUTS\Questpond\11-api-testing.md`
 - `csharp-aspnetcore-rest-api-notes.md`
 - `dotnet8-rest-api-viva-notes.md`
+- `senior_dotnet_interview_guide.md` (HTTP/API MCQs, standards, tests, and scenarios)
 - `common-http-headers.md`
 - `http-headers-dotnet-viva.md`
 - `senior_dotnet_storage_session_jwt_viva.md`
 
 ### [EF Core, LINQ, and SQL Server](05-efcore-linq-and-sql.md)
 
+- `B:\TUTS\Questpond\06-orm.md`
+- `B:\TUTS\Questpond\08-sql.md`
+- `B:\TUTS\Questpond\11-sql-scenarios.md`
 - `ef_core_linq_senior_interview_guide.md`
 - `EF_Core_Viva_Preparation.md`
 - `ef-core-linq-optimization-senior-viva-guide.md`
@@ -88,6 +101,7 @@ The Azure cloud-administration guide uses Azure services and project examples na
 
 ### [Architecture and Design Patterns](06-architecture-and-design-patterns.md)
 
+- `B:\TUTS\Questpond\09-design-pattern-architecture.md`
 - `23-design-patterns-csharp-senior-viva.md`
 - `clean-architecture-cqrs-vs-mvc-dotnet8.md`
 - `senior_dotnet_architect_viva_prep.md`
@@ -100,6 +114,7 @@ The Azure cloud-administration guide uses Azure services and project examples na
 
 ### [System Design and Distributed Systems](08-system-design-and-distributed-systems.md)
 
+- `B:\TUTS\Questpond\10-scenario-based-interview-questions.md`
 - `high-traffic-dotnet-api-blueprint.md`
 - `saga-pattern-dotnet.md`
 - `async-messaging-dotnet-viva-guide.md`
@@ -133,8 +148,36 @@ The Azure cloud-administration guide uses Azure services and project examples na
 
 ### [Azure Cloud Administration for Backend Developers](13-azure-cloud-administration-for-backend.md)
 
+- `B:\TUTS\Questpond\07-azure.md`
+- `B:\TUTS\Questpond\13-azure-interview-questions.md`
 - `B:\TUTS\H1B\Backend-Development-Viva-Preparation.md` (backend topics used for context; it does not enumerate Azure services)
 - Supplementary Azure identity, networking, compute, data, messaging, governance, monitoring, and security service guide
+
+### [Questpond Employer Interviews and Full PDF Question Bank](15-questpond-employer-interviews-and-full-pdf.md)
+
+All employer-specific Questpond interview notes are preserved in full here, including multi-topic reports already mined for questions in the focused guides. The complete 70-page `RealTimeInterviewQuestions.pdf` is also included as page-organized extracted text.
+
+- `B:\TUTS\Questpond\14-globallogic-interview-questions.md`
+- `B:\TUTS\Questpond\20-accenture-first-round.md`
+- `B:\TUTS\Questpond\20-capgemini-azure-lead.md`
+- `B:\TUTS\Questpond\20-capgemini.md`
+- `B:\TUTS\Questpond\20-carelon.md`
+- `B:\TUTS\Questpond\20-cognizant.md`
+- `B:\TUTS\Questpond\20-deloitte.md`
+- `B:\TUTS\Questpond\20-epam.md`
+- `B:\TUTS\Questpond\20-globaldata.md`
+- `B:\TUTS\Questpond\20-lti-mindtree.md`
+- `B:\TUTS\Questpond\20-mphasis.md`
+- `B:\TUTS\Questpond\20-persistent-architect.md`
+- `B:\TUTS\Questpond\20-persistent-azure-dotnet.md`
+- `B:\TUTS\Questpond\20-verisk.md`
+- `B:\TUTS\Questpond\30-fn-lastletteralphabet.md`
+- `B:\TUTS\Questpond\30-infosys.md`
+- `B:\TUTS\Questpond\30-tcs.md`
+- `B:\TUTS\Questpond\30-virtusa.md`
+- `B:\TUTS\Questpond\30-wipro.md`
+- `B:\TUTS\Questpond\30-wolters.md`
+- `B:\TUTS\Questpond\RealTimeInterviewQuestions.pdf`
 
 ### Exact duplicates omitted
 

@@ -1887,3 +1887,262 @@ The `Address` object is explicitly created again, so changes to the cloned addre
 - Deep cloning object graphs with cycles or shared references needs care: a correct implementation may need a map of already-cloned objects to preserve relationships and avoid infinite recursion.
 
 **In short:** `MemberwiseClone()` creates a new outer object but shares referenced objects. A deep clone also creates independent copies of the nested objects that need to be independent.
+
+---
+
+## Additional Questpond question sets
+
+### Questpond source: 01-oop-solid.md
+
+---
+
+
+
+---
+
+#### OOP / SOLID
+
+###### 1. What is a method signature? (PDF p. 4)
+**Answer:** In C#, a method signature consists of its name and parameter types, order, and passing modes (`ref`, `out`, or `in`). Return type and parameter names are not part of the signature, so methods cannot be overloaded by return type alone.
+
+###### 2. What is the order of constructor execution? (PDF p. 4)
+**Answer:** For a derived object, static initialization runs first (base type before derived type); then instance field initializers run base-to-derived, followed by instance constructors base-to-derived. A derived constructor's `base(...)` constructor call happens before its own body.
+
+###### 3. What is a destructor, and how many can there be in a class? (PDF p. 4)
+**Answer:** C#'s destructor syntax (`~Type()`) declares a finalizer, called nondeterministically by the garbage collector before reclaiming an object. A class can declare at most one finalizer, and it cannot be called directly.
+
+###### 4. Why do you need a destructor when GC is there? (PDF p. 4)
+**Answer:** GC reclaims managed memory, but it does not itself release external resources such as native handles. Prefer `IDisposable` and `using` for deterministic cleanup; a finalizer is a last-resort safety net for directly owned unmanaged resources.
+
+###### 5. What happens when a constructor is private? (PDF p. 4)
+**Answer:** Code outside the type cannot instantiate it directly. This is useful for static-only classes, controlled factory creation, or singleton-style construction; the type itself can still create instances.
+
+###### 6. If an abstract class has a concrete method, can its child class have a method with the same name and modify it? (PDF p. 4)
+**Answer:** Yes. If the base method is `virtual` or `abstract`, the child can override it using `override`. Otherwise a same-named method hides it (optionally with `new`), and calls through a base reference still use the base implementation.
+
+###### 7. Abstract vs. static class (PDF p. 4)
+**Answer:** An abstract class can have instance state, constructors, and concrete or abstract members, and is intended as a base type. A static class cannot be instantiated or inherited and contains only static members.
+
+###### 8. Abstract class vs. interface (PDF p. 4)
+**Answer:** An abstract class can share implementation and instance state but a class can inherit only one base class. An interface defines a capability/contract that a type can implement alongside other interfaces; modern C# also allows default interface implementations, but interfaces are not a substitute for class instance state.
+
+###### 9. Why does an abstract class have constructors? (PDF p. 4)
+**Answer:** The abstract class cannot be instantiated directly, but its constructor initializes the base portion of each concrete derived object and can enforce invariants or accept shared initialization data.
+
+###### 10. When should you use an abstract class versus an interface? Give a real-time C# example. (PDF p. 5)
+**Answer:** Use an interface for a capability shared by otherwise unrelated types, such as `IExportable.Export()`. Use an abstract class when related types need shared state or common implementation, such as `Employee` holding an employee ID and implementing shared payroll behavior.
+
+###### 11. Implicit and explicit interface implementation (PDF p. 5)
+**Answer:** An implicit implementation uses a public member with the matching signature and is callable through the class or interface. An explicit implementation is qualified (`void IFoo.Run()`), is callable only through an `IFoo` reference, and lets a class resolve same-signature members from multiple interfaces.
+
+###### 12. What is a default interface method, and why do we need it? (PDF p. 5)
+**Answer:** It is an interface member with a body. It lets an interface evolve with a default behavior without forcing every existing implementer to add the method; implementations can still provide their own behavior.
+
+###### 13. Polymorphism in C# (PDF p. 5)
+**Answer:** Polymorphism lets callers use a common base or interface while the actual implementation varies by runtime type. For example, calling `Draw()` on `IShape` invokes the implementation for the concrete shape.
+
+###### 14. Method overriding with an example (PDF p. 5)
+**Answer:** A base class marks a method `virtual` (or `abstract`), and a derived class provides an `override`. For example, `Animal.Speak()` can be virtual and `Dog.Speak()` can override it to return “Woof.”
+
+###### 15. Difference between `virtual`, `override`, and `new` in C# (PDF p. 5)
+**Answer:** `virtual` permits derived customization; `override` replaces a virtual/abstract base implementation with runtime dispatch; `new` hides a same-named member and dispatch is determined by the reference's compile-time type.
+
+###### 16. Method hiding with an example (PDF p. 5)
+**Answer:** A derived method with the same name/signature hides a base method, typically declared with `new`. If `Base b = new Derived()`, calling a hidden nonvirtual method uses `Base`'s version; calling through `Derived` uses the derived version.
+
+###### 17. Is return type considered in method overloading? (PDF p. 5)
+**Answer:** No. Overloads must differ by their parameter list (including parameter types/order or passing modes); changing only the return type causes a compile-time ambiguity/error.
+
+###### 18. Why and when use method hiding? Give a real-time scenario. (PDF p. 5)
+**Answer:** Hiding can provide a type-specific member when a base member is nonvirtual or when changing virtual dispatch would be unsafe, but it often surprises callers. For example, a derived reporting type may expose a specialized `Print()` only when referenced as that derived type; prefer composition or overriding when polymorphic behavior is intended.
+
+###### 19. How do you extend a sealed class? (PDF p. 5)
+**Answer:** You cannot derive from a sealed class. Use composition/wrapping, or add extension methods for stateless helper operations; extension methods do not alter the type or access its private state.
+
+###### 20. What is an extension method? Write an example. (PDF p. 5)
+**Answer:** It is a static method that can be invoked with instance-method syntax on a receiver type. Example: `public static bool IsBlank(this string? s) => string.IsNullOrWhiteSpace(s);` in a non-nested static class.
+
+###### 21. What is the SOLID principle and why implement it? (PDF p. 5)
+**Answer:** SOLID is a set of design principles—SRP, OCP, LSP, ISP, and DIP—that help keep code cohesive, extensible, substitutable, and loosely coupled. Apply them where they reduce change risk and improve testability; avoid adding abstractions without a real need.
+
+###### 22. State all the SOLID principles with an example. (PDF p. 5)
+**Answer:** **SRP:** separate invoice calculation from emailing. **OCP:** add a new discount strategy without editing stable checkout logic. **LSP:** any `IStorage` implementation honors the same read/write contract. **ISP:** split a large device interface into `IPrintable` and `IScannable`. **DIP:** business services depend on `IRepository`, not a concrete database class.
+
+###### 23. What is the Liskov Substitution Principle? Explain with an example. (PDF p. 5)
+**Answer:** A subtype must be usable wherever its base type is expected without violating that type's behavioral promises. If a `ReadOnlyFile` inherits a mutable `File` but throws on `Write`, it breaks callers' expectations; model read-only behavior with a narrower interface instead.
+
+###### 24. Difference between Open/Closed and Liskov principles (PDF p. 5)
+**Answer:** Open/Closed says stable code should allow extension without repeated modification, often through polymorphism. Liskov says those extensions must preserve the base contract so substitutes remain correct. OCP concerns change structure; LSP concerns behavioral correctness.
+
+###### 25. Difference between Liskov Substitution and Interface Segregation (PDF p. 5)
+**Answer:** LSP requires implementations/subtypes to honor the contract clients rely on. ISP says clients should not be forced to depend on methods they do not use, so split broad interfaces into focused contracts. ISP helps define smaller contracts; LSP governs valid implementations of them.
+
+###### 26. Calculate salary of an employee based on grades (Strategy pattern) (PDF p. 5)
+**Answer:** Define `ISalaryStrategy.Calculate(basePay)`, provide one implementation per grade/pay rule, and inject the selected strategy into an employee/payroll service. This keeps grade-specific calculations separate and permits adding a grade without embedding conditionals throughout payroll code.
+
+---
+
+### Questpond source: 02-csharp.md
+
+---
+
+
+
+---
+
+#### C#
+
+##### Theory questions
+
+###### 1. Value type vs. reference type (PDF p. 5)
+**Answer:** A value-type variable holds its value directly (or inline in its containing object); assignment copies the value. A reference-type variable holds a reference to an object; assignment copies the reference, so both variables can refer to the same object. Structs and enums are value types; classes, arrays, and delegates are reference types.
+
+###### 2. `ref` vs. `out`; give a real-time example and usage (PDF p. 5)
+**Answer:** Both pass a variable by reference. `ref` requires the caller to initialize it and allows reading/writing; `out` need not be initialized, and the method must assign it before returning. Use `TryParse(string, out int)` to return success and a parsed value.
+
+###### 3. Can `ref` be used in async programming? (PDF p. 5)
+**Answer:** `ref`, `in`, and `out` parameters are not allowed on `async` methods because state may have to survive across suspension points. Return a result object/tuple or use an appropriate mutable object instead.
+
+###### 4. `const` vs. `readonly` (PDF p. 5)
+**Answer:** `const` is a compile-time constant, implicitly static, and must be initialized at declaration. `readonly` is assigned at declaration or in an instance/static constructor and can hold a value determined at runtime; it is not deeply immutable when it references a mutable object.
+
+###### 5. What is the garbage collector? (PDF p. 5)
+**Answer:** The .NET GC automatically reclaims managed objects that are no longer reachable, using generations to optimize collection. It does not guarantee prompt cleanup of unmanaged resources, which should normally be released with `IDisposable`.
+
+###### 6. How do you remove unmanaged code/garbage in unmanaged code? (PDF p. 5)
+**Answer:** Release each unmanaged allocation or handle using its matching API (for example, `free` for `malloc`, `CloseHandle` for a Windows handle). In .NET, wrap owned native resources in `SafeHandle`/`IDisposable` and dispose deterministically; a finalizer is only a fallback.
+
+###### 7. `throw` vs. `throw ex` (PDF p. 5)
+**Answer:** Inside a catch block, `throw;` rethrows while preserving the original stack trace. `throw ex;` resets the visible stack origin to that line, obscuring the original location; use `throw;` unless intentionally throwing a new exception with the original as its inner exception.
+
+###### 8. What are access modifiers? (PDF p. 5)
+**Answer:** Access modifiers control visibility: `public`, `private`, `protected`, `internal`, `protected internal`, and `private protected` (with file-local `file` for top-level types in modern C#). Choose the narrowest visibility that supports intended use.
+
+###### 9. What is a partial class? Give a real-time scenario. (PDF p. 5)
+**Answer:** `partial` lets one type declaration be split across files and combined at compile time. It is useful when generated code and hand-written code must coexist (for example, a generated model plus custom methods); both parts are one type, not separate runtime classes.
+
+###### 10. What are generics? Have you implemented any in your project? (PDF p. 5)
+**Answer:** Generics parameterize types or methods, enabling reusable, type-safe code without routine boxing/casting, such as `List<T>` or `Repository<T>`. In a project, a generic repository or result wrapper can centralize shared behavior while retaining compile-time type checks.
+
+###### 11. What are collections and their types? (PDF p. 5)
+**Answer:** Collections store and organize groups of values. Common families include generic lists/sequences (`List<T>`, `Queue<T>`), key/value maps (`Dictionary<TKey,TValue>`), sets (`HashSet<T>`), concurrent collections, and legacy non-generic collections.
+
+###### 12. What are `Dictionary`, `List`, and `Hashtable`? (PDF p. 5)
+**Answer:** `List<T>` is an indexed, ordered dynamic array; `Dictionary<TKey,TValue>` maps unique keys to values with generic type safety; `Hashtable` is a legacy non-generic key/value map that stores `object` and may require boxing/casts. Prefer generic collections in new code.
+
+###### 13. What are `Stack` and `Queue`? (PDF p. 5)
+**Answer:** A stack is last-in, first-out (LIFO), commonly used for undo/history; a queue is first-in, first-out (FIFO), useful for ordered work processing. Generic forms are `Stack<T>` and `Queue<T>`.
+
+###### 14. Difference between generic and non-generic collections (PDF p. 6)
+**Answer:** Generic collections enforce element types at compile time and avoid most value-type boxing. Non-generic collections store `object`, need runtime casts, and can fail with invalid types; they are mainly encountered in legacy APIs.
+
+###### 15. What is a concurrent collection? (PDF p. 6)
+**Answer:** It is a collection designed for safe concurrent access by multiple threads, such as `ConcurrentDictionary<TKey,TValue>` or `ConcurrentQueue<T>`. Use it when shared concurrent mutation is needed, while still reasoning about atomicity across multi-step operations.
+
+###### 16. What are delegates and built-in delegates? (PDF p. 6)
+**Answer:** A delegate is a type-safe reference to method(s) with a matching signature. Common generic delegates are `Action` (no result), `Func` (result), and `Predicate<T>` (Boolean test); events are commonly backed by delegates.
+
+###### 17. What is LINQ? (PDF p. 6)
+**Answer:** Language Integrated Query provides composable query operations for in-memory collections and providers such as EF Core. It supports query and method syntax; execution may be immediate or deferred depending on the operator and provider.
+
+###### 18. `Single` vs. `SingleOrDefault`; `First` vs. `FirstOrDefault`; `Select` vs. `SelectMany` (PDF p. 6)
+**Answer:** `Single` requires exactly one match and throws for zero or multiple; `SingleOrDefault` permits zero but still throws for multiple. `First` returns the first match and throws if none; `FirstOrDefault` returns a default when none. `Select` maps each item to one result; `SelectMany` maps each item to a sequence and flattens the sequences.
+
+###### 19. LINQ query practice: left join, right join, inner join, and get the third highest (PDF p. 6)
+**Answer:** An inner join keeps matching pairs; a left join keeps all left rows and fills missing right values with defaults; a right join is expressed by reversing the inputs to a left join. For the third-highest distinct salary in SQL, use `DENSE_RANK() OVER (ORDER BY Salary DESC)` and filter rank 3; in LINQ, sort distinct salaries descending and use `Skip(2).FirstOrDefault()`.
+
+###### 20. What is the effect of combining `AsParallel` with LINQ queries? (PDF p. 6)
+**Answer:** `AsParallel()` opts an `IEnumerable<T>` query into PLINQ, allowing work to run concurrently across cores. It can improve sufficiently large CPU-bound queries, but adds overhead, may change result ordering unless `AsOrdered()` is used, and is not appropriate for every query or side-effecting operation.
+
+###### 21. `IEnumerable` vs. `ToList` (PDF p. 6)
+**Answer:** `IEnumerable<T>` represents an enumerable sequence and may execute lazily each time it is iterated. `ToList()` immediately enumerates and materializes results into a list, using memory but giving a stable snapshot of those results.
+
+###### 22. `IQueryable` vs. `ToList` (PDF p. 6)
+**Answer:** `IQueryable<T>` builds a provider-translatable expression that is typically executed by the data source when enumerated. `ToList()` executes the query immediately and brings the resulting rows into memory; filter and project before materializing to avoid unnecessary transfer.
+
+###### 23. `IQueryable` vs. `IEnumerable` (PDF p. 6)
+**Answer:** `IEnumerable<T>` is generally enumerated in application code, while `IQueryable<T>` carries an expression tree that a provider may translate (for example, to SQL). Provider translation has limits, so keep query expressions translatable and materialize deliberately.
+
+###### 24. What is the `yield` keyword? (PDF p. 6)
+**Answer:** `yield return` produces values lazily from an iterator, and `yield break` ends it. The compiler generates the iterator state machine, so values are produced as the consumer advances rather than being collected up front.
+
+###### 25. `break` vs. `continue` vs. `return` (PDF p. 6)
+**Answer:** `break` exits the nearest loop or switch; `continue` skips to the next loop iteration; `return` exits the current method (optionally returning a value).
+
+###### 26. Reflection in C# (PDF p. 6)
+**Answer:** Reflection inspects assembly/type/member metadata at runtime and can invoke members dynamically. It supports serializers, plugin systems, and tooling, but can reduce performance and type safety; cache metadata or use source generation where suitable.
+
+###### 27. What is TPL? (PDF p. 6)
+**Answer:** The Task Parallel Library is .NET's task-oriented API for asynchronous and parallel work, including `Task`, continuations, cancellation, and parallel loops. It abstracts much of the low-level thread management.
+
+###### 28. TPL vs. thread (PDF p. 6)
+**Answer:** A `Thread` is a lower-level execution resource with explicit lifecycle management. TPL tasks represent units of work and normally use the thread pool for CPU-bound work, providing composition, continuations, and cancellation; a task is not necessarily a dedicated thread.
+
+###### 29. Async vs. thread (PDF p. 6)
+**Answer:** Asynchrony lets an operation yield while waiting, improving scalability for I/O; it does not inherently create a thread. A thread is an execution resource. CPU-bound work needs execution capacity (often a pool thread), whereas asynchronous I/O can wait without occupying one.
+
+###### 30. How do you start a task? (PDF p. 6)
+**Answer:** Prefer invoking an `async` method or using `Task.Run` for CPU-bound work. For I/O, call the API's asynchronous method directly (for example, `await client.GetAsync(...)`); avoid `Task.Run` merely to wrap naturally asynchronous I/O.
+
+###### 31. Does `async` create threads? (PDF p. 6)
+**Answer:** No. `async` enables compiler-generated state-machine behavior and `await` continuation; an I/O operation may complete without tying up a thread. `Task.Run` can queue CPU-bound work to a thread-pool thread.
+
+###### 32. What are `async` and `await`? (PDF p. 6)
+**Answer:** `async` allows a method to use `await` and normally return `Task`, `Task<T>`, or `ValueTask<T>`. `await` asynchronously waits for an awaitable to complete, then resumes the method, propagating results or exceptions without synchronously blocking the caller.
+
+###### 33. Difference between `async`/`await` and TPL (PDF p. 6)
+**Answer:** TPL is the broader task and parallel-work API; `async`/`await` is language syntax for composing awaitable operations, often represented by TPL tasks. Async is primarily useful for nonblocking waits; parallelism is about doing work simultaneously.
+
+###### 34. How does `async`/`await` work under the hood? (PDF p. 6)
+**Answer:** The compiler transforms an async method into a state machine. At an incomplete `await`, it records state and registers a continuation; when the awaitable completes, that continuation resumes the state machine, eventually completing the returned task.
+
+###### 35. `ValueTask` vs. `Task` (PDF p. 6)
+**Answer:** `Task` is a reference type and is the normal, simpler choice. `ValueTask<T>` can avoid allocation when results are often available synchronously, but is more complex and has consumption constraints; use it only after measuring a meaningful hot-path benefit.
+
+###### 36. What is thread-pool starvation? (PDF p. 6)
+**Answer:** It occurs when pool threads are blocked or consumed faster than the pool can make them available, delaying queued work. Avoid sync-over-async and unnecessary blocking, use asynchronous I/O, and diagnose thread-pool queues/latency under load.
+
+###### 37. What is `IAsyncStateMachine`? (PDF p. 6)
+**Answer:** It is the runtime interface implemented by compiler-generated async state machines, with `MoveNext()` advancing execution and `SetStateMachine()` supporting state-machine setup. Application code normally uses `async`/`await` rather than implementing it directly.
+
+###### 38. What is the structure of the query pipeline in EF? (PDF p. 6)
+**Answer:** LINQ builds an expression tree over `IQueryable`; EF Core's provider translates supported parts to a database query, sends it through the driver, then materializes returned rows into entities/projections and applies tracking if enabled. Deferred queries execute when enumerated or materialized.
+
+###### 39. What latest .NET version have you used, and what special feature have you seen? (PDF p. 6)
+**Answer:** Give the version you have actually used, then name a feature and its practical effect. For example: “I used .NET 8; its first-party keyed dependency-injection services help resolve implementations by key.” Do not claim experience you do not have.
+
+###### 40. Why is there no explicit `Main` in a new .NET 6/7 console `Program.cs`, and how does execution start? (PDF p. 6)
+**Answer:** Top-level statements let the compiler synthesize the entry-point `Main` method around statements in `Program.cs`. The runtime still starts at that generated entry point; top-level statements may also access command-line arguments and use `await`.
+
+###### 41. What is a concurrency issue, how do you handle it, and is it related to performance? (PDF p. 6)
+**Answer:** It is an incorrect or conflicting outcome caused by overlapping operations (such as lost updates or races). Use suitable synchronization, atomic operations, immutable data, or optimistic concurrency with conflict handling. Concurrency can improve throughput but excessive contention or coordination can hurt performance.
+
+###### 42. How do you optimize memory? (PDF p. 6)
+**Answer:** Measure allocations and retention with a profiler first. Reduce unnecessary copies/large temporary objects, stream large data, reuse buffers carefully, dispose unmanaged resources, avoid retaining object graphs, and use pooling only when measurements justify its complexity.
+
+###### 43. If the database is optimized but the application still has performance issues, what steps would you take? (PDF p. 6)
+**Answer:** Establish latency/throughput baselines and profile CPU, allocation/GC, locks, network, serialization, and external dependencies. Find the dominant cost, reduce redundant work and payloads, use async I/O and caching where correct, then load-test and compare against the baseline.
+
+###### 44. How can you optimize an application with heavy database interactions—legacy application, Web API, or React front end? (PDF p. 6)
+**Answer:** Reduce round trips and over-fetching, batch writes, paginate/stream large results, and use caching only with explicit freshness/invalidation rules. In legacy code, instrument and refactor hotspots incrementally; in APIs optimize queries and payloads; in React avoid duplicate requests and cache server state appropriately. Measure end-to-end before and after.
+
+###### 45. How would you diagnose a production issue with very limited information? (PDF p. 6)
+**Answer:** Confirm impact and timeline, preserve evidence, check recent changes and health dashboards, then correlate logs, metrics, and traces using request/correlation IDs. Form and test hypotheses safely, mitigate customer impact (rollback/feature flag if appropriate), identify root cause, and document prevention and follow-up.
+
+###### 46. Which code will perform better? (PDF pp. 6–7; code image continues on p. 7)
+**Prompt examples:**
+```csharp
+string longString = "";
+for (int i = 0; i < 1000; i++)
+{
+    longString += "one more ";
+}
+
+StringBuilder sBuilder = new StringBuilder();
+for (int i = 0; i < 1000; i++)
+{
+    sBuilder.Append("Add This");
+}
+string str = sBuilder.ToString();
+```
+**Answer:** The `StringBuilder` approach is generally faster and allocates less for repeated concatenation in a loop. C# strings are immutable, so each `+=` creates a new string and copies prior content; `StringBuilder` reuses a mutable buffer and creates the final string once. The sample appends different text in each version, so a fair benchmark should use equivalent output and representative input sizes.
