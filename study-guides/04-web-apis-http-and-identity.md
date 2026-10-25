@@ -1,23 +1,21 @@
 # Web APIs, HTTP, and Identity
 
-This guide combines the distinct source materials below. Original explanations, examples, and interview questions are retained; exact duplicate source files are excluded and documented in the library index.
+Each concept is explained once. Where several notes covered the same topic, they have been merged into a single section, and related topics in other guides are linked instead of repeated.
 
-## Included source materials
+## Contents
 
-- [csharp-aspnetcore-rest-api-notes.md](#csharp-aspnetcore-rest-api-notes-md)
-- [dotnet8-rest-api-viva-notes.md](#dotnet8-rest-api-viva-notes-md)
-- [common-http-headers.md](#common-http-headers-md)
-- [http-headers-dotnet-viva.md](#http-headers-dotnet-viva-md)
-- [senior_dotnet_storage_session_jwt_viva.md](#senior-dotnet-storage-session-jwt-viva-md)
+- [C# and ASP.NET Core REST API Notes](#csharp-aspnetcore-rest-api-notes-md)
+- [REST API and ASP.NET Core 8 — Viva Preparation Notes](#dotnet8-rest-api-viva-notes-md)
+- [HTTP Headers in .NET REST APIs — Viva Preparation](#http-headers-dotnet-viva-md)
+- [Web Storage, ASP.NET Core Session, and JWT Logout](#senior-dotnet-storage-session-jwt-viva-md)
+- [HTTP and API Interview Question Bank](#http-and-api-interview-question-bank)
+- [Additional Questpond question sets](#additional-questpond-question-sets)
+
 ---
 
 <a id="csharp-aspnetcore-rest-api-notes-md"></a>
 
-## Source: C# and ASP.NET Core REST API Notes
-
-*Imported from `csharp-aspnetcore-rest-api-notes.md`.*
-
-### C# and ASP.NET Core REST API Notes
+## C# and ASP.NET Core REST API Notes
 
 A concise reference for C# range/index syntax, local functions, response formats, and controller return types.
 
@@ -240,11 +238,7 @@ Keep the underlying response model and business logic independent of the represe
 
 <a id="dotnet8-rest-api-viva-notes-md"></a>
 
-## Source: REST API and ASP.NET Core 8 — Viva Preparation Notes
-
-*Imported from `dotnet8-rest-api-viva-notes.md`.*
-
-### REST API and ASP.NET Core 8 — Viva Preparation Notes
+## REST API and ASP.NET Core 8 — Viva Preparation Notes
 
 #### 1. What is a REST API?
 
@@ -314,40 +308,9 @@ The exact pipeline depends on `Program.cs`. Not every application uses every mid
 
 #### 3. Middleware: the key concept
 
-Middleware components are chained. A component can run code before and after `await next(context)`.
+Each middleware can run code before and after `await next(context)`, or short-circuit by not calling `next`. `Use`/`Run`/`Map`, ordering, and middleware vs filters are explained once in [.NET and ASP.NET Core → Middleware](03-dotnet-and-aspnetcore.md#aspnetcore-middleware-filters-dotnet8-9-md).
 
-```csharp
-var builder = WebApplication.CreateBuilder(args);
-var app = builder.Build();
-
-app.Use(async (context, next) =>
-{
-    Console.WriteLine($"Request: {context.Request.Method} {context.Request.Path}");
-
-    await next(context); // Continue to the next component
-
-    Console.WriteLine($"Response: {context.Response.StatusCode}");
-});
-
-app.MapGet("/hello", () => Results.Ok(new { message = "Hello" }));
-app.Run();
-```
-
-The first log runs on the way in; the second runs after downstream processing completes. If middleware does not call `next`, it short-circuits the pipeline.
-
-##### Common middleware
-
-| Component | Purpose |
-|---|---|
-| Exception handling | Converts unhandled exceptions into controlled error responses |
-| HTTPS redirection | Redirects HTTP requests to HTTPS |
-| CORS | Controls which browser origins can call the API |
-| Authentication | Establishes the caller's identity |
-| Authorization | Enforces access policies |
-| Response compression | Compresses eligible response bodies |
-| Custom logging | Records request/response information |
-
-A typical configuration order is:
+Typical order for an API:
 
 ```csharp
 app.UseExceptionHandler();
@@ -358,8 +321,6 @@ app.UseAuthorization();
 
 app.MapControllers(); // Or map Minimal API endpoints
 ```
-
-Register services before `builder.Build()`. Configure middleware before mapping/running endpoints as appropriate. Routing is handled by endpoint routing; explicit `UseRouting()` is often unnecessary in simple modern applications, but can be used when precise ordering is needed.
 
 #### 4. Minimal API vs. Controller-based API
 
@@ -621,17 +582,11 @@ No. REST is an architectural style; HTTP is the protocol commonly used to implem
 **Q: What is statelessness?**  
 Each request carries the information needed to process it. The server does not rely on stored conversational client state from a previous request. Statelessness does not mean the application cannot use a database or store domain data.
 
-**Q: What is middleware?**  
-A component in the HTTP pipeline that can process a request, call the next component, and process the response.
-
 **Q: What is the difference between authentication and authorization?**  
 Authentication establishes identity; authorization determines what that identity is permitted to do.
 
 **Q: What is model binding?**  
 The framework maps request data—such as route values, query parameters, headers or JSON bodies—to handler parameters or .NET objects.
-
-**Q: What is dependency injection?**  
-A technique where a class receives dependencies from a container instead of creating them itself. ASP.NET Core includes a built-in DI container.
 
 **Q: What does Swagger do?**  
 OpenAPI describes the API contract; Swagger UI renders an interactive page for exploring and testing endpoints.
@@ -651,134 +606,9 @@ REST-style APIs commonly use resource URLs and JSON; gRPC uses service contracts
 
 ---
 
-<a id="common-http-headers-md"></a>
-
-## Source: Common HTTP Headers
-
-*Imported from `common-http-headers.md`.*
-
-### Common HTTP Headers
-
-HTTP headers are key-value pairs exchanged between clients and servers to provide metadata about a request or response. The same header can appear in both directions; each header is listed once below to avoid duplication.
-
-#### 1. Request and Representation Headers
-
-| Header | Purpose | Example |
-|---|---|---|
-| `Accept` | Media types the client can process. | `Accept: application/json` |
-| `Accept-Encoding` | Compression formats the client supports. | `Accept-Encoding: gzip, br` |
-| `Accept-Language` | Preferred response language(s). | `Accept-Language: en-US,en;q=0.9` |
-| `Authorization` | Credentials used to authenticate a request. | `Authorization: Bearer <token>` |
-| `Content-Encoding` | Encoding applied to the message body. | `Content-Encoding: gzip` |
-| `Content-Length` | Message-body size in bytes, when applicable. | `Content-Length: 1500` |
-| `Content-Type` | Media type of the message body. | `Content-Type: application/json` |
-| `Cookie` | Cookies sent by the client to the server. | `Cookie: sessionId=<value>` |
-| `Host` | Target host and optional port in HTTP/1.1. | `Host: api.example.com` |
-| `If-Match` | Makes a request conditional on a matching entity tag; often used to prevent lost updates. | `If-Match: "v3"` |
-| `If-None-Match` | Supports cache validation or conditional requests when an entity tag does not match. | `If-None-Match: "v3"` |
-| `Origin` | Identifies the origin that initiated a request; used by CORS. | `Origin: https://app.example.com` |
-| `Referer` | Identifies the referring page, subject to browser privacy policies. | `Referer: https://example.com/page` |
-| `User-Agent` | Identifies the client software; format and reliability vary. | `User-Agent: ExampleClient/1.0` |
-
-#### 2. Response, Caching, and Redirect Headers
-
-| Header | Purpose | Example |
-|---|---|---|
-| `Cache-Control` | Controls caching behavior. | `Cache-Control: no-store` |
-| `ETag` | Provides a validator for a particular representation. | `ETag: "v3"` |
-| `Expires` | Gives a response expiration date; `Cache-Control` generally takes precedence. | `Expires: Wed, 21 Oct 2026 07:28:00 GMT` |
-| `Location` | Indicates a redirect target or the location of a newly created resource. | `Location: /api/orders/123` |
-| `Retry-After` | Tells a client when it may retry after certain responses, such as `429` or `503`. | `Retry-After: 60` |
-| `Set-Cookie` | Asks the client to store a cookie. | `Set-Cookie: sessionId=<value>; HttpOnly; Secure; SameSite=Lax` |
-| `Vary` | Identifies request headers that affect which cached representation is selected. | `Vary: Accept-Encoding` |
-
-#### 3. CORS Headers
-
-Cross-Origin Resource Sharing (CORS) headers let a server state which cross-origin browser requests are permitted.
-
-| Header | Purpose | Example |
-|---|---|---|
-| `Access-Control-Allow-Origin` | Specifies the allowed origin. | `Access-Control-Allow-Origin: https://app.example.com` |
-| `Access-Control-Allow-Credentials` | Allows credentialed CORS requests when set to `true`; wildcard origin cannot be used for credentialed responses. | `Access-Control-Allow-Credentials: true` |
-| `Access-Control-Allow-Methods` | Lists methods permitted by the CORS policy. | `Access-Control-Allow-Methods: GET, POST, PUT` |
-| `Access-Control-Allow-Headers` | Lists request headers permitted by the CORS policy. | `Access-Control-Allow-Headers: Content-Type, Authorization` |
-| `Access-Control-Expose-Headers` | Lists response headers browser JavaScript may read beyond the CORS-safelisted response headers. | `Access-Control-Expose-Headers: ETag, X-Correlation-ID` |
-| `Access-Control-Max-Age` | Specifies how long a preflight result may be cached. | `Access-Control-Max-Age: 600` |
-
-#### 4. Security Headers
-
-| Header | Purpose | Example |
-|---|---|---|
-| `Content-Security-Policy` | Restricts permitted sources for scripts, styles, images, and other resources. | `Content-Security-Policy: default-src 'self'` |
-| `Permissions-Policy` | Controls access to selected browser features. | `Permissions-Policy: camera=(), microphone=()` |
-| `Referrer-Policy` | Controls how much referrer information the browser sends. | `Referrer-Policy: strict-origin-when-cross-origin` |
-| `Strict-Transport-Security` | Tells browsers to use HTTPS for the specified period. Send only over HTTPS. | `Strict-Transport-Security: max-age=31536000; includeSubDomains` |
-| `X-Content-Type-Options` | Prevents MIME-type sniffing. | `X-Content-Type-Options: nosniff` |
-| `X-Frame-Options` | Controls whether a page may be embedded in a frame; CSP `frame-ancestors` is the more flexible modern control. | `X-Frame-Options: DENY` |
-
-**Note:** `X-XSS-Protection` is obsolete and should not be relied on for security. Prefer a well-configured Content Security Policy and context-appropriate output encoding.
-
-#### 5. API and Application-Specific Headers
-
-These are common conventions, not all standardized HTTP headers. Prefer a documented naming scheme and avoid adding the `X-` prefix to new custom names unless required by an existing API contract.
-
-| Header | Purpose | Example |
-|---|---|---|
-| `Idempotency-Key` | Lets an API recognize retries of the same operation when the API explicitly supports it. | `Idempotency-Key: 7f2d...` |
-| `X-Correlation-ID` | Custom identifier used to trace a request across services. | `X-Correlation-ID: 8f14e45f...` |
-| `X-Request-ID` | Custom identifier for a request, often used in logs and support diagnostics. | `X-Request-ID: req-12345` |
-| `RateLimit-Limit` | Can communicate the applicable request quota when supported by the API. | `RateLimit-Limit: 100` |
-| `RateLimit-Remaining` | Can communicate the remaining quota when supported by the API. | `RateLimit-Remaining: 20` |
-| `RateLimit-Reset` | Can communicate when a quota resets, according to the API's documented format. | `RateLimit-Reset: 60` |
-
-`X-API-Key` is another custom convention sometimes used for API-key authentication. For example: `X-API-Key: <key>`. Prefer secure transport, avoid exposing keys in URLs, and use the authentication mechanism documented by the API.
-
-#### 6. Practical Notes
-
-- Header names are case-insensitive.
-- Do not manually set `Host` in ordinary browser or HTTP-client code; the client generally manages it.
-- `Content-Type` describes the body being sent; `Accept` describes the response formats the client prefers.
-- `Authorization` and `Cookie` carry credentials or session data. Do not log their values.
-- Use `Cache-Control: no-store` for sensitive responses that should not be stored by caches.
-- CORS is enforced by browsers; it is not a replacement for server-side authentication or authorization.
-- `Server` may disclose implementation details and is often omitted or minimized.
-- `X-Requested-With: XMLHttpRequest` is a legacy convention, not a reliable security control.
-- HTTP/2 and HTTP/3 have protocol-specific restrictions on connection-specific headers such as `Connection`, `Keep-Alive`, `Transfer-Encoding`, and `Upgrade`.
-
-#### 7. Example API Exchange
-
-Request:
-
-```http
-GET /api/products HTTP/1.1
-Host: api.example.com
-Accept: application/json
-Authorization: Bearer <token>
-X-Correlation-ID: 8f14e45f
-```
-
-Response:
-
-```http
-HTTP/1.1 200 OK
-Content-Type: application/json
-Cache-Control: no-store
-X-Correlation-ID: 8f14e45f
-
-{"items":[]}
-```
-
-*Examples use placeholder domains and credentials. Never use real secrets in documentation or logs.*
-
----
-
 <a id="http-headers-dotnet-viva-md"></a>
 
-## Source: HTTP Headers in .NET REST APIs — Viva Preparation
-
-*Imported from `http-headers-dotnet-viva.md`.*
-
-### HTTP Headers in .NET REST APIs — Viva Preparation
+## HTTP Headers in .NET REST APIs — Viva Preparation
 
 A concise reference to common HTTP request/response headers, caching, ETags, and security headers, with ASP.NET Core examples.
 
@@ -1041,9 +871,6 @@ The filename causes ASP.NET Core to generate an appropriate `Content-Disposition
 **Q: What is the difference between a header and the body?**  
 A: Headers carry metadata; the body carries the representation or payload.
 
-**Q: `401` vs `403`?**  
-A: `401` means valid authentication credentials are missing or unacceptable; `403` means the server refuses access, commonly because the authenticated caller lacks permission.
-
 **Q: `304` vs `412`?**  
 A: `304 Not Modified` is used for conditional retrieval such as `If-None-Match`; `412 Precondition Failed` means a request precondition such as `If-Match` was not satisfied.
 
@@ -1070,15 +897,42 @@ A: No. Choose headers based on whether the endpoint serves browser-rendered cont
 - Avoid leaking tokens, cookies, internal server details, or sensitive data in headers/logs.
 - Let ASP.NET Core manage standard protocol headers unless there is a clear reason to override them.
 
+#### 11. More headers worth knowing
+
+**CORS response headers.** These are set by ASP.NET Core's CORS policy, so don't write them by hand.
+
+| Header | Purpose | Example |
+|---|---|---|
+| `Access-Control-Allow-Credentials` | Allows credentialed requests; can't be combined with a `*` origin | `true` |
+| `Access-Control-Expose-Headers` | Response headers that browser JavaScript is allowed to read | `ETag, X-Correlation-ID` |
+| `Access-Control-Max-Age` | How long the browser may cache the preflight result | `600` |
+
+**API and application headers.** These are conventions, not all of them standardized. Document them in your API contract.
+
+| Header | Purpose | Example |
+|---|---|---|
+| `Idempotency-Key` | Lets the API recognise a retried POST and avoid doing the work twice | `Idempotency-Key: 7f2d...` |
+| `X-Correlation-ID` / `X-Request-ID` | Trace one request across services and logs | `X-Correlation-ID: 8f14e45f` |
+| `RateLimit-Limit` / `-Remaining` / `-Reset` | Tell clients their quota | `RateLimit-Remaining: 20` |
+| `X-API-Key` | Simple API-key auth; never put keys in URLs | `X-API-Key: <key>` |
+| `Expires` | Old-style expiry date; `Cache-Control` wins if both are present | `Expires: Wed, 21 Oct 2026 07:28:00 GMT` |
+
+**Good to remember**
+
+- Header names are case-insensitive.
+- Never log `Authorization` or `Cookie` values.
+- Don't set `Host` yourself; the HTTP client manages it.
+- Avoid the `X-` prefix for **new** custom headers unless an existing contract requires it.
+- `X-XSS-Protection` and `X-Requested-With` are legacy; don't rely on them for security.
+- `Server` can leak implementation details, so it's often removed.
+- HTTP/2 and HTTP/3 forbid connection-specific headers such as `Connection`, `Keep-Alive`, and `Transfer-Encoding`.
+
 ---
 
 <a id="senior-dotnet-storage-session-jwt-viva-md"></a>
 
-## Source: Web Storage, ASP.NET Core Session, and JWT Logout
+## Web Storage, ASP.NET Core Session, and JWT Logout
 
-*Imported from `senior_dotnet_storage_session_jwt_viva.md`.*
-
-### Web Storage, ASP.NET Core Session, and JWT Logout
 #### Senior .NET Developer Viva Preparation
 
 This guide consolidates the key concepts, storage locations, retrieval methods, code examples, security considerations, and interview questions without repeating the same explanations.
@@ -1397,11 +1251,6 @@ Neither approach is automatically “more secure” in every architecture. Secur
 
 ##### Q11. Should we store a user's full profile or permissions in session/JWT?
 **Answer:** Store only what is needed. Large session objects increase cache load; JWT claims can become stale until expiry. For permissions that must change immediately, use server-side authorization data or a version/revocation check.
-
-##### Q12. What is the difference between authentication and authorization?
-**Answer:** Authentication establishes who the caller is. Authorization determines what that caller is permitted to do. A valid session or JWT does not by itself guarantee access to every resource.
-
----
 
 #### 6. Key takeaways
 
@@ -1990,38 +1839,7 @@ tests for externally observable behavior.
 
 ### 2. How ASP.NET Core Builds an HTTP Response
 
-#### High-level flow
-
-``` text
-Client
-  |
-  v
-Kestrel / hosting server
-  |
-  v
-Middleware pipeline
-  |-- Exception handling
-  |-- HTTPS redirection / forwarded headers (as configured)
-  |-- Routing
-  |-- CORS (as configured)
-  |-- Authentication
-  |-- Authorization
-  v
-Endpoint execution
-  |-- Minimal API handler or MVC controller
-  |-- Binding and validation (MVC)
-  |-- Application/business logic
-  v
-Result execution / output formatting
-  |-- Select status code
-  |-- Set response headers
-  |-- Serialize response body
-  v
-Response sent to client
-```
-
-Exact ordering depends on application configuration. Reverse proxies and
-gateways may perform additional work before the request reaches Kestrel.
+The request flow (Kestrel → middleware → routing → auth → endpoint) is shown in the REST notes above, section 2. This part zooms in on how the **response** is produced.
 
 #### Example controller
 
@@ -2061,53 +1879,6 @@ public sealed class OrdersController : ControllerBase
 6.  Response headers such as `Content-Type` are set as appropriate.
 7.  The server sends the response. Once the response has started,
     changing status or headers is generally no longer possible.
-
-#### Middleware that observes the final status
-
-``` csharp
-public sealed class RequestMetricsMiddleware
-{
-    private readonly RequestDelegate _next;
-    private readonly ILogger<RequestMetricsMiddleware> _logger;
-
-    public RequestMetricsMiddleware(
-        RequestDelegate next,
-        ILogger<RequestMetricsMiddleware> logger)
-    {
-        _next = next;
-        _logger = logger;
-    }
-
-    public async Task InvokeAsync(HttpContext context)
-    {
-        var startedAt = Stopwatch.GetTimestamp();
-
-        try
-        {
-            await _next(context);
-        }
-        finally
-        {
-            var elapsed = Stopwatch.GetElapsedTime(startedAt);
-
-            _logger.LogInformation(
-                "HTTP {Method} {Path} responded {StatusCode} in {ElapsedMs} ms",
-                context.Request.Method,
-                context.Request.Path,
-                context.Response.StatusCode,
-                elapsed.TotalMilliseconds);
-        }
-    }
-}
-```
-
-Register it early enough to observe the endpoint's outcome:
-
-``` csharp
-app.UseMiddleware<RequestMetricsMiddleware>();
-```
-
-Add `using System.Diagnostics;` for `Stopwatch`.
 
 #### Important internals to explain in interviews
 
@@ -2766,15 +2537,7 @@ allowed access.
 
 ## Additional Questpond question sets
 
-### Questpond source: 05-dotnet-core-web-api.md
-
----
-
-
-
----
-
-#### .NET Core Web API
+### .NET Core Web API
 
 ###### 1. Framework vs. Core (PDF p. 9)
 **Answer:** .NET Framework is the original Windows-focused implementation, commonly used for existing ASP.NET applications. Modern .NET (called .NET Core through 3.1, then .NET 5+) is cross-platform, actively developed, and the recommended platform for new applications; “Core” is not a separate current product name.
@@ -2943,15 +2706,7 @@ allowed access.
 
 ---
 
-### Questpond source: 11-api-testing.md
-
----
-
-
-
----
-
-#### API Testing
+### API Testing
 
 ###### 1. Why do we need testing? (PDF p. 15)
 **Answer:** Testing checks that software meets expected behavior and catches regressions before release. A balanced suite provides fast feedback at unit level and confidence in integration, security, and end-to-end behavior.

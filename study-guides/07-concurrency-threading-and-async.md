@@ -1,102 +1,23 @@
 # Concurrency, Threading, and Async
 
-This guide combines the distinct source materials below. Original explanations, examples, and interview questions are retained; exact duplicate source files are excluded and documented in the library index.
+Each concept is explained once. Where several notes covered the same topic, they have been merged into a single section, and related topics in other guides are linked instead of repeated.
 
-## Included source materials
+## Contents
 
-- [csharp-concurrency-span-stack-queue.md](#csharp-concurrency-span-stack-queue-md)
-- [csharp-task-parallelism-interview-notes.md](#csharp-task-parallelism-interview-notes-md)
-- [dotnet-threading-async-await-senior-viva.md](#dotnet-threading-async-await-senior-viva-md)
+- [C# Interview Notes: Synchronization, Span, Stack, and Queue](#csharp-concurrency-span-stack-queue-md)
+- [Task Parallelism in C# — Interview Notes](#csharp-task-parallelism-interview-notes-md)
+- [.NET Threading and Async/Await — Senior Developer Viva Preparation](#dotnet-threading-async-await-senior-viva-md)
+- [Senior .NET Interview Guide: Async, Threading, and Locking](#senior-dotnet-async-locking-distributed-guide-md)
+
 ---
 
 <a id="csharp-concurrency-span-stack-queue-md"></a>
 
-## Source: C# Interview Notes: Synchronization, Span, Stack, and Queue
-
-*Imported from `csharp-concurrency-span-stack-queue.md`.*
-
-### C# Interview Notes: Synchronization, Span, Stack, and Queue
+## C# Interview Notes: Synchronization, Span, Stack, and Queue
 
 #### 1. `lock`, `Monitor`, and `Interlocked`
 
-These APIs help make code thread-safe, but they solve different problems.
-
-##### `lock` — protect a critical section
-
-Use `lock` when multiple operations must run as one protected unit.
-
-```csharp
-private readonly object _gate = new();
-private int _balance;
-
-public void Deposit(int amount)
-{
-    lock (_gate)
-    {
-        _balance += amount;
-    }
-}
-```
-
-- Only one thread at a time can enter a `lock` using the same lock object.
-- The lock is released automatically, including when an exception occurs.
-- Lock a private object, not `this`, a `Type`, or a publicly accessible object.
-
-##### `Monitor` — more control over locking
-
-`lock` is the preferred syntax for ordinary locking. `Monitor` is useful when you need features such as a timeout or condition signaling with `Wait`/`Pulse`.
-
-```csharp
-using System;
-using System.Threading;
-
-private readonly object _gate = new();
-
-public void TryUpdate()
-{
-    if (!Monitor.TryEnter(_gate, TimeSpan.FromSeconds(2)))
-    {
-        Console.WriteLine("Could not acquire the lock in time.");
-        return;
-    }
-
-    try
-    {
-        Console.WriteLine("Updating safely.");
-    }
-    finally
-    {
-        Monitor.Exit(_gate);
-    }
-}
-```
-
-Always call `Monitor.Exit` only after successfully entering, and place it in `finally`.
-
-##### `Interlocked` — atomic operations on individual values
-
-Use it for simple atomic updates such as incrementing a counter. It does not protect a larger multi-step operation.
-
-```csharp
-using System.Threading;
-
-private int _requestCount;
-
-public void RecordRequest()
-{
-    Interlocked.Increment(ref _requestCount);
-}
-```
-
-##### Quick comparison
-
-| Need | Best fit |
-|---|---|
-| Protect a block of related operations | `lock` |
-| Lock timeout or `Wait`/`Pulse` signaling | `Monitor` |
-| Atomic increment, exchange, or compare-and-swap | `Interlocked` |
-
-**Rule of thumb:** start with `lock` for shared mutable state; use `Interlocked` for a genuinely simple atomic operation; use `Monitor` when its additional control is needed.
+Covered once, with `Mutex` and `SemaphoreSlim`, in the [synchronization primitives section](#senior-dotnet-async-locking-distributed-guide-md) below.
 
 ---
 
@@ -151,49 +72,7 @@ Calling `ToString()` creates a string. If you can process the span directly, you
 
 A **stack** is LIFO (last in, first out); a **queue** is FIFO (first in, first out). Use the built-in generic collections unless you specifically need to implement the data structures yourself.
 
-##### Built-in stack
-
-```csharp
-using System;
-using System.Collections.Generic;
-
-var stack = new Stack<int>();
-
-stack.Push(10);
-stack.Push(20);
-stack.Push(30);
-
-Console.WriteLine(stack.Pop());  // 30
-Console.WriteLine(stack.Peek()); // 20
-Console.WriteLine(stack.Count);  // 2
-```
-
-- `Push`: add to the top.
-- `Pop`: remove and return the top item.
-- `Peek`: read the top item without removing it.
-
-##### Built-in queue
-
-```csharp
-using System;
-using System.Collections.Generic;
-
-var queue = new Queue<int>();
-
-queue.Enqueue(10);
-queue.Enqueue(20);
-queue.Enqueue(30);
-
-Console.WriteLine(queue.Dequeue()); // 10
-Console.WriteLine(queue.Peek());    // 20
-Console.WriteLine(queue.Count);     // 2
-```
-
-- `Enqueue`: add to the back.
-- `Dequeue`: remove and return the front item.
-- `Peek`: read the front item without removing it.
-
-`Pop()` on an empty stack and `Dequeue()` on an empty queue throw `InvalidOperationException`. Check `Count`, or use `TryPop` / `TryDequeue` where available in your target .NET version.
+Built-in `Stack<T>` / `Queue<T>` members and `TryPop`/`TryDequeue` are covered in [C# Language → Standard collections](01-csharp-language-and-quality.md#csharp-data-types-and-collections-cheatsheet-md). Below is how you'd build them yourself, which is a common whiteboard question.
 
 ##### Custom implementations with a linked list
 
@@ -315,27 +194,13 @@ The custom classes use nullable reference annotations (`Node?`), so enable nulla
 
 <a id="csharp-task-parallelism-interview-notes-md"></a>
 
-## Source: Task Parallelism in C# — Interview Notes
-
-*Imported from `csharp-task-parallelism-interview-notes.md`.*
-
-### Task Parallelism in C# — Interview Notes
+## Task Parallelism in C# — Interview Notes
 
 A concise guide to `Task`, `Task.WhenAll`, `Parallel.ForEach`, exception handling, cancellation, and choosing the right approach.
 
-#### 1. The key distinction
+Concurrency vs parallelism vs asynchrony, and thread vs task, are explained in the threading viva section below. This part focuses on the **APIs**.
 
-- **Concurrency**: multiple operations make progress during overlapping periods.
-- **Parallelism**: multiple operations execute at the same time, typically on multiple CPU cores.
-- **`Task` / `Task<T>`**: represents an operation that may complete in the future.
-- **`async` / `await`**: makes asynchronous code easier to compose; `await` waits without blocking the calling thread.
-- **`Task.Run`**: queues work to the thread pool. Commonly useful for CPU-bound work, not usually needed to call an already-asynchronous I/O API.
-- **`Task.WhenAll`**: creates a task that completes when all supplied tasks complete.
-- **`Parallel.For` / `Parallel.ForEach`**: parallel loop APIs intended mainly for CPU-bound work.
-
-> Important: tasks do not guarantee one dedicated thread per task, nor do they guarantee that work runs simultaneously.
-
-#### 2. Run one operation with `Task.Run`
+#### 1. Run one operation with `Task.Run`
 
 ```csharp
 using System;
@@ -359,7 +224,7 @@ class Program
 
 Use `Task.Run` when you need to move CPU-bound work off a responsive thread, such as a UI thread. In ASP.NET Core, avoid wrapping ordinary synchronous work in `Task.Run` just to make a request handler appear asynchronous.
 
-#### 3. Run independent asynchronous operations with `Task.WhenAll`
+#### 2. Run independent asynchronous operations with `Task.WhenAll`
 
 This is a common pattern when several I/O operations can happen independently, such as API calls or database queries.
 
@@ -423,7 +288,7 @@ static async Task<int> GetNumberAsync(int value)
 
 `Task.WhenAll` preserves the input task order in its result array; completion order may differ.
 
-#### 4. CPU-bound loops with `Parallel.ForEach`
+#### 3. CPU-bound loops with `Parallel.ForEach`
 
 Use this for independent, CPU-intensive work on collection items—not as a default replacement for asynchronous I/O.
 
@@ -481,7 +346,7 @@ Console.WriteLine(total);
 
 For simple sums, LINQ's `numbers.Sum()` is usually clearer; parallelism is not automatically faster for small workloads.
 
-#### 5. `Parallel.For`
+#### 4. `Parallel.For`
 
 ```csharp
 using System;
@@ -501,7 +366,7 @@ class Program
 
 The upper bound is **exclusive**, so this loop processes `1` through `5`. Output order can vary.
 
-#### 6. Exceptions
+#### 5. Exceptions
 
 Exceptions from a task are observed when it is awaited. With `Task.WhenAll`, all supplied tasks are allowed to complete; the task returned by `WhenAll` records the failures.
 
@@ -526,7 +391,7 @@ catch
 
 Place this code inside an `async` method. `await` typically throws one underlying exception; inspect `allTask.Exception` when you need all failures.
 
-#### 7. Cancellation with `CancellationToken`
+#### 6. Cancellation with `CancellationToken`
 
 Cancellation is cooperative: the operation must observe the token and stop. Pass the token to the operation and use APIs that support cancellation.
 
@@ -567,7 +432,7 @@ class Program
 
 Cancellation does not forcibly kill arbitrary code. CPU-bound loops should periodically check the token; asynchronous APIs should receive it when supported.
 
-#### 8. Quick decision guide
+#### 7. Quick decision guide
 
 | Situation | Prefer |
 |---|---|
@@ -578,7 +443,7 @@ Cancellation does not forcibly kill arbitrary code. CPU-bound loops should perio
 | Need cancellation | `CancellationToken` / `CancellationTokenSource` |
 | Need to process a small collection of simple values | A normal loop or LINQ may be simpler and faster |
 
-#### 9. Interview points to remember
+#### 8. Interview points to remember
 
 1. `await` does not itself create a new thread.
 2. `Task.WhenAll` waits for multiple tasks; it does not start cold, unstarted tasks automatically. Calling async methods usually starts their operations.
@@ -593,11 +458,7 @@ Cancellation does not forcibly kill arbitrary code. CPU-bound loops should perio
 
 <a id="dotnet-threading-async-await-senior-viva-md"></a>
 
-## Source: .NET Threading and Async/Await — Senior Developer Viva Preparation
-
-*Imported from `dotnet-threading-async-await-senior-viva.md`.*
-
-### .NET Threading and Async/Await — Senior Developer Viva Preparation
+## .NET Threading and Async/Await — Senior Developer Viva Preparation
 
 #### 1. The Big Picture
 
@@ -913,3 +774,515 @@ A: Usually no. Start the three asynchronous I/O operations and await them with `
 #### Final Takeaway
 
 For most modern .NET application code, **prefer the Task-based model**. Use `async`/`await` for asynchronous I/O, use `Task.Run` or parallel APIs for suitable CPU-bound work, and use `Thread` when you specifically need low-level thread control. Always distinguish the operation (`Task`), the execution resource (`Thread`), overlapping progress (concurrency), and simultaneous execution (parallelism).
+
+---
+
+<a id="senior-dotnet-async-locking-distributed-guide-md"></a>
+
+## Senior .NET Interview Guide: Async, Threading, and Locking
+
+> A consolidated reference for senior .NET developer and solution architect interviews. Repeated explanations have been removed; related topics are grouped together.
+
+#### 1. Core mental models
+
+- **`async`/`await` is not automatically multithreading.** It is a way to compose asynchronous operations without blocking a thread while an operation is incomplete.
+- **I/O-bound work:** use genuinely asynchronous APIs, such as `HttpClient.GetAsync`, EF Core async methods, and `File.ReadAllTextAsync`.
+- **CPU-bound work:** consumes CPU while it runs. `async` does not make the calculation faster or remove its CPU cost.
+- **`Task` represents an operation**, not necessarily a dedicated thread.
+- ASP.NET Core does not normally have a custom request `SynchronizationContext`. Blocking async work is still harmful because it occupies ThreadPool threads and can cause starvation.
+- Prefer async end-to-end for I/O. Do not add `Task.Run` merely to make synchronous I/O look asynchronous.
+
+#### 2. `Task`, `async`/`await`, `Task.Run`, and `Task.FromResult`
+
+##### `async`/`await`: compose asynchronous work
+
+```csharp
+[HttpGet]
+public async Task<IActionResult> Get(CancellationToken cancellationToken)
+{
+    var data = await _repository.GetAsync(cancellationToken);
+    return Ok(data);
+}
+```
+
+When the awaited task is incomplete, the method suspends and its current thread can do other work. When the operation completes, the method's continuation runs later, possibly on another ThreadPool thread.
+
+##### `Task.Run`: queue CPU work to the ThreadPool
+
+```csharp
+[HttpGet("calculation")]
+public async Task<IActionResult> GetCalculation()
+{
+    var result = await Task.Run(() => HeavyCpuCalculation());
+    return Ok(result);
+}
+```
+
+This can be reasonable for a **short, bounded CPU calculation** when the result is needed in the same request and measurements justify moving the calculation off the current request-execution thread. It is not a default ASP.NET Core performance technique: `Task.Run` still consumes ThreadPool capacity and CPU. Under high concurrency, it can worsen contention and latency.
+
+For heavy, lengthy, or high-volume calculations, prefer a bounded worker pool, durable queue, or separately scalable compute service. Return `202 Accepted` with a job ID when the result will be available later.
+
+Do not use `Task.Run` for ordinary asynchronous I/O, and do not fire-and-forget it from a controller:
+
+```csharp
+Task.Run(() => DoWork()); // unsafe fire-and-forget in a web request
+```
+
+The work may be lost on process shutdown, exceptions may go unobserved, and the application has no durable retry or coordination guarantee.
+
+##### `Task.FromResult`: return an already-known value as a completed task
+
+```csharp
+public Task<bool> IsFeatureEnabledAsync()
+{
+    return Task.FromResult(true);
+}
+```
+
+Use it when an API contract requires `Task<T>` but the result is already available synchronously, such as a cache hit, simple in-memory result, or test mock. It **does not** run work asynchronously.
+
+Incorrect:
+
+```csharp
+return Task.FromResult(DoBlockingWork()); // DoBlockingWork runs before Task.FromResult
+```
+
+Use a genuinely asynchronous API for I/O instead.
+
+##### `Task.Run` vs `Task.FromResult`
+
+| Need | Appropriate choice |
+|---|---|
+| Await database/network/file I/O | Async API + `await` |
+| Return a value already available synchronously from a `Task<T>` method | `Task.FromResult(value)` |
+| Run CPU work on a ThreadPool thread | `Task.Run`, only when justified |
+| Durable, long-running background job | Queue + worker/job system |
+| Make blocking I/O “async” | Neither |
+
+#### 3. Synchronization primitives: `lock`, `Monitor`, `Mutex`, `Semaphore`, `SemaphoreSlim`
+
+| Primitive | Scope | Concurrent entrants | Async waiting | Main purpose |
+|---|---|---:|---|---|
+| `lock` | One process | 1 | No `await` inside the lock | Protect a short in-memory critical section |
+| `Monitor` | One process | 1 per monitor at a time | No async wait API | Mutual exclusion plus condition signaling |
+| `Mutex` | Can coordinate processes when named appropriately | 1 owner | `WaitOne` blocks a thread | Cross-process mutual exclusion |
+| `Semaphore` | Can be named for cross-process use on supported platforms | Up to configured count | `WaitOne` blocks a thread | Limit concurrent access to N slots |
+| `SemaphoreSlim` | One process | Up to configured count | `WaitAsync` | Async-compatible concurrency limiting or mutual exclusion when count is 1 |
+
+##### `lock`: one thread at a time in a critical section
+
+```csharp
+private readonly object _gate = new();
+private int _counter;
+
+public void Increment()
+{
+    lock (_gate)
+    {
+        _counter++;
+    }
+}
+```
+
+- If the gate is free, the thread enters.
+- If another thread owns it, the contender blocks until it can enter.
+- The lock is released automatically when control exits the block, including when an exception is thrown.
+- Use a private dedicated object; do not lock on `this`, a string, or a public object.
+- Keep the critical section short.
+- `lock` is reentrant for the owning thread.
+- Do not use `await` inside a `lock` block.
+
+##### `Monitor`: `lock` plus explicit coordination
+
+`lock (gate)` is conceptually implemented using `Monitor.Enter` and `Monitor.Exit` in a `try/finally`. Use `Monitor` directly when you specifically need `TryEnter`, `Wait`, `Pulse`, or `PulseAll`.
+
+```csharp
+private readonly object _gate = new();
+private bool _dataAvailable;
+
+public void WaitForData()
+{
+    lock (_gate)
+    {
+        while (!_dataAvailable)
+        {
+            Monitor.Wait(_gate); // releases gate and waits
+        }
+
+        // The condition is true and this thread owns gate again.
+        ConsumeData();
+    }
+}
+
+public void PublishData()
+{
+    lock (_gate)
+    {
+        ProduceData();
+        _dataAvailable = true;
+        Monitor.Pulse(_gate); // wake one waiter
+    }
+}
+```
+
+Important details:
+
+- `Monitor.Wait(gate)` requires the current thread to own the monitor. It releases the monitor and waits.
+- `Pulse(gate)` moves one waiting thread toward being eligible to reacquire the monitor; it does **not** immediately transfer ownership.
+- `PulseAll(gate)` makes all waiting threads eligible to compete to reacquire the monitor.
+- A pulsed thread cannot continue past `Wait` until it reacquires the monitor.
+- Always check the condition in a `while`, not an `if`: the condition may no longer be true when the thread reacquires the monitor.
+- Signal after updating the shared state, while holding the same monitor.
+
+##### `Mutex`: one owner across processes
+
+```csharp
+using var mutex = new Mutex(false, @"Global\MyApplicationJob");
+
+bool ownsMutex = false;
+try
+{
+    try
+    {
+        ownsMutex = mutex.WaitOne(TimeSpan.FromSeconds(5));
+    }
+    catch (AbandonedMutexException)
+    {
+        // The previous owner died. The caller now owns the mutex,
+        // but must validate/recover the protected resource.
+        ownsMutex = true;
+    }
+
+    if (!ownsMutex)
+        throw new TimeoutException("Could not acquire the mutex.");
+
+    DoProtectedWork();
+}
+finally
+{
+    if (ownsMutex)
+        mutex.ReleaseMutex();
+}
+```
+
+A named mutex can coordinate processes on supported operating systems. `WaitOne` blocks a thread, and ownership is thread-affine: the owning thread must release it. An abandoned mutex indicates that the previous owner terminated without releasing it; protected data may be inconsistent and needs recovery. For web applications, do not use a mutex as a substitute for durable distributed job coordination.
+
+##### `SemaphoreSlim`: allow up to N concurrent entrants
+
+```csharp
+private readonly SemaphoreSlim _slots = new(initialCount: 3, maxCount: 3);
+
+public async Task ProcessAsync(CancellationToken cancellationToken)
+{
+    await _slots.WaitAsync(cancellationToken);
+    try
+    {
+        await CallDownstreamServiceAsync(cancellationToken);
+    }
+    finally
+    {
+        _slots.Release();
+    }
+}
+```
+
+- At most three operations can hold a slot concurrently.
+- When the count reaches zero, additional callers wait asynchronously.
+- `Release` returns a slot and allows a waiter to proceed.
+- Always release in `finally`.
+- The count limits concurrency only within this `SemaphoreSlim` instance/process. It does not impose a cluster-wide limit.
+- `SemaphoreSlim(1, 1)` can serialize async operations, but it is not owner-thread-affine in the way `Mutex` is.
+
+##### How do you allow more than one thread into a protected region?
+
+Use a semaphore with a count greater than one, such as `SemaphoreSlim(5, 5)`, to permit up to five concurrent entrants. This is a **concurrency limit**, not exclusive mutual exclusion. Ensure the shared resource is safe for concurrent access; a semaphore does not make arbitrary shared state thread-safe.
+
+##### Quick selection guide
+
+| Requirement | Choose |
+|---|---|
+| Protect a short in-memory update | `lock` |
+| Wait for a condition and signal waiters | `Monitor.Wait` / `Pulse` / `PulseAll` |
+| Coordinate a named mutex across processes on one machine | `Mutex` |
+| Limit async operations in one process to N | `SemaphoreSlim(N, N)` |
+| Coordinate ownership across multiple servers | Database/queue/distributed coordination pattern |
+| Make a long-running job durable | Durable queue or job store, not a lock |
+
+##### `Interlocked`: atomic update of a single value
+
+For one simple counter or flag you don't need a lock. `Interlocked` does it atomically, but it can't protect a multi-step operation.
+
+```csharp
+private int _requestCount;
+
+public void RecordRequest() => Interlocked.Increment(ref _requestCount);
+```
+
+Other members: `Add`, `Exchange`, `CompareExchange` (compare-and-swap), `Read` (for 64-bit values on 32-bit platforms).
+
+#### 4. Deadlocks and ThreadPool starvation
+
+##### Lock-order deadlock
+
+Thread A acquires lock A and waits for B; thread B acquires B and waits for A. Prevent this by acquiring multiple locks in a consistent global order, keeping lock scopes short, and avoiding unnecessary nested locks.
+
+##### Sync-over-async
+
+```csharp
+var result = GetDataAsync().Result; // blocks a ThreadPool thread
+```
+
+This may deadlock in environments with a synchronization context and can cause ThreadPool starvation in ASP.NET Core under load. Prefer `await GetDataAsync()` end-to-end. `ConfigureAwait(false)` is useful in many library contexts to avoid capturing a context, but it does not make blocking safe.
+
+##### ThreadPool starvation
+
+Common causes include `.Result`, `.Wait()`, `GetAwaiter().GetResult()`, `Thread.Sleep`, synchronous blocking I/O, and excessive work queued through `Task.Run`.
+
+Typical symptoms: high request latency, growing queues, low-to-moderate CPU despite requests hanging, and slow recovery. Investigate traces, thread-pool counters, blocked stacks, dependency latency, and load tests. Fix the blocking path rather than simply increasing thread counts.
+
+#### Async internals: OS I/O, `SynchronizationContext`, and `ConfigureAwait`
+
+<a id="async-internals"></a>
+
+##### 1. How does the OS kernel handle I/O asynchronously?
+
+A simplified flow:
+
+1. Application requests a network or file operation.
+2. The runtime invokes OS facilities appropriate for the platform and operation.
+3. The kernel and/or device processes the operation.
+4. Completion is reported through OS mechanisms.
+5. .NET completes the associated asynchronous operation and schedules its continuation.
+
+The exact mechanism differs by OS and I/O type. Windows uses completion mechanisms such as I/O Completion Ports for many socket and file scenarios. Linux commonly uses readiness notification mechanisms such as `epoll` for sockets; newer APIs such as `io_uring` support other I/O models. Do not state that all .NET I/O always uses one specific OS mechanism.
+
+###### File I/O example
+
+```csharp
+public static async Task<string> ReadTextAsync(
+    string path,
+    CancellationToken cancellationToken)
+{
+    return await File.ReadAllTextAsync(path, cancellationToken);
+}
+```
+
+The caller can await the operation without blocking its thread while the asynchronous operation is pending. Actual behavior can vary by OS, filesystem, device, and API; not every operation is guaranteed to be truly asynchronous at the hardware level.
+
+##### 2. Task Scheduler and `SynchronizationContext`
+
+- The **Task Scheduler** is relevant to scheduling `Task` work, especially tasks explicitly scheduled through APIs such as `Task.Run`.
+- A **SynchronizationContext** is an abstraction that can direct continuations to a particular environment, such as a UI thread.
+- WPF/WinForms commonly have a UI synchronization context. After `await`, code normally returns to that context so it can update UI controls.
+- ASP.NET Core does not use the classic ASP.NET synchronization context, so context capture usually is not a concern there.
+
+```csharp
+Console.WriteLine($"Before: {Environment.CurrentManagedThreadId}");
+
+await Task.Delay(100);
+
+Console.WriteLine($"After: {Environment.CurrentManagedThreadId}");
+```
+
+The thread ID may change across the `await`. Correct asynchronous code should not depend on a particular thread ID unless the framework explicitly requires thread affinity.
+
+##### 3. What does `ConfigureAwait(false)` do, and how can it help?
+
+By default, an `await` may capture the current synchronization context (or a relevant scheduler) so the continuation can return to it. `ConfigureAwait(false)` tells that await not to require resuming on the captured context.
+
+```csharp
+public async Task<string> FetchAsync(HttpClient client)
+{
+    var content = await client
+        .GetStringAsync("https://example.com")
+        .ConfigureAwait(false);
+
+    return content;
+}
+```
+
+###### When it matters
+
+- In reusable libraries that must work in UI and other environments, avoiding context capture can prevent unnecessary context switches.
+- In WPF/WinForms, it can prevent a library continuation from needing the UI thread when the continuation does not use UI objects.
+- In ASP.NET Core, there is normally no classic synchronization context to return to, so it usually provides little or no performance benefit.
+
+###### Important correction
+
+`ConfigureAwait(false)` does **not** mean “always switch to a ThreadPool thread,” and it does not itself make the underlying I/O faster. It means the continuation does not require the captured context. The continuation may run wherever the completion machinery schedules it.
+
+Use it selectively in library code where context affinity is unnecessary. Do not use it in UI code before directly updating UI controls unless you explicitly marshal back to the UI thread.
+
+#### 5. Async in the ASP.NET Core request pipeline
+
+Typical flow:
+
+1. Kestrel accepts and parses the HTTP request.
+2. Middleware executes in order.
+3. Routing, authentication/authorization, model binding, filters, and the endpoint execute as applicable.
+4. Async I/O is awaited without holding a ThreadPool thread for the entire wait.
+5. The response is written to the client.
+
+Middleware itself is explained in [.NET and ASP.NET Core → Middleware](03-dotnet-and-aspnetcore.md#aspnetcore-middleware-filters-dotnet8-9-md).
+
+Best practices:
+
+- Use async I/O APIs end-to-end.
+- Pass `CancellationToken` (often `HttpContext.RequestAborted`) to cancellable operations.
+- Avoid `.Result`, `.Wait()`, synchronous I/O, and unnecessary `Task.Run`.
+- Do not start untracked fire-and-forget work in a controller.
+- Use `BackgroundService` for in-process hosted work, but remember that in-process work alone is not durable across restarts and is not a cluster-wide singleton.
+- Move durable or lengthy work to a queue and worker.
+
+Durable background jobs, distributed locks, and resilience patterns are covered in [System Design → Distributed async processing](08-system-design-and-distributed-systems.md#distributed-async-processing).
+
+#### 6. MCQ and scenario exam
+
+##### Multiple-choice questions
+
+**Q1. What does `async` do by itself?**
+
+A. Creates a new thread  
+B. Enables asynchronous method composition and `await`  
+C. Makes CPU work parallel  
+D. Guarantees better performance  
+
+**Answer: B.** It does not automatically create a thread or parallelize CPU work.
+
+**Q2. What does `await` do when the task is incomplete?**
+
+A. Always blocks the current thread  
+B. Suspends the async method and arranges a continuation  
+C. Always creates a new thread  
+D. Cancels the operation  
+
+**Answer: B.** The current thread can return to other work.
+
+**Q3. What does `Task.FromResult(5)` do?**
+
+A. Runs calculation 5 on another thread  
+B. Returns an already-completed `Task<int>` containing 5  
+C. Waits five seconds  
+D. Starts a background job  
+
+**Answer: B.**
+
+**Q4. Which primitive can asynchronously wait for a concurrency slot?**
+
+A. `lock`  
+B. `Monitor.Wait`  
+C. `SemaphoreSlim.WaitAsync`  
+D. `Mutex.WaitOne`  
+
+**Answer: C.**
+
+**Q5. What does `Monitor.Pulse` guarantee?**
+
+A. The waiter immediately owns the monitor  
+B. One waiting thread becomes eligible to compete to reacquire the monitor  
+C. All waiting threads enter the critical section  
+D. The monitor is released permanently  
+
+**Answer: B.**
+
+**Q6. How can up to five operations enter a region concurrently within one process?**
+
+A. `lock`  
+B. `SemaphoreSlim(1, 1)`  
+C. `SemaphoreSlim(5, 5)`  
+D. `Monitor.PulseAll`  
+
+**Answer: C**, provided the protected resource supports concurrent access.
+
+**Q7. Why is `.Result` dangerous in a web request?**
+
+A. It always causes a deadlock  
+B. It blocks a thread and can cause starvation; deadlock is also possible in some contexts  
+C. It always starts another process  
+D. It cancels the task  
+
+**Answer: B.**
+
+**Q8. Which option is suitable for durable background work across several application instances?**
+
+A. `Task.Run` in a controller  
+B. A static boolean  
+C. A durable queue with worker consumers  
+D. A process-local `lock`  
+
+**Answer: C.**
+
+**Q9. What is the main reason for idempotent message processing?**
+
+A. To make every message execute faster  
+B. To safely handle retries and duplicate delivery  
+C. To avoid using a database  
+D. To guarantee messages are never redelivered  
+
+**Answer: B.**
+
+**Q10. Is `Task.Run(() => HeavyCpuCalculation())` always wrong in a controller?**
+
+A. Yes, in every possible case  
+B. No; it can be a measured, bounded compromise, but it consumes ThreadPool/CPU capacity and can hurt under load  
+C. It makes the work durable  
+D. It makes the work run on another server  
+
+**Answer: B.**
+
+##### Scenario questions
+
+**Scenario 1: An API becomes slow under load, with many `.Result` calls and relatively low CPU.**
+
+Expected answer: suspect sync-over-async and ThreadPool starvation. Trace blocking stacks and dependency latency; use async APIs end-to-end and remove blocking calls.
+
+**Scenario 2: Five downstream requests may run concurrently, but no more than five.**
+
+Expected answer: use a shared `SemaphoreSlim(5, 5)` in that process, `WaitAsync` with cancellation, and `Release` in `finally`. Use a distributed limiter or gateway if the limit must apply across all instances.
+
+**Scenario 3: Consumers wait until a producer publishes data.**
+
+Expected answer: use a condition protected by the same monitor, check it in a `while` loop, call `Monitor.Wait` while false, and update the condition before `Pulse`/`PulseAll`.
+
+**Scenario 4: A scheduled job runs on two application replicas.**
+
+Expected answer: prefer queue-based competing consumers or atomic database job claiming. Add idempotency, lease recovery, and retries. A local `lock` cannot coordinate replicas.
+
+**Scenario 5: A controller performs a CPU-intensive report calculation that takes several seconds.**
+
+Expected answer: use a durable queue and worker or separately scalable compute service, return `202 Accepted` with a job ID, and expose status/results. Use `Task.Run` only for bounded, measured cases where immediate response is necessary.
+
+#### 7. Code review checklist
+
+##### Async correctness
+- [ ] No `.Result`, `.Wait()`, or `GetAwaiter().GetResult()` in request paths without a compelling, reviewed reason.
+- [ ] No `async void` except event handlers.
+- [ ] I/O uses true asynchronous APIs.
+- [ ] No unnecessary `Task.Run` around I/O or trivial synchronous code.
+- [ ] CPU-heavy work is measured and bounded or offloaded.
+- [ ] Cancellation tokens are propagated where supported.
+- [ ] Exceptions from background work are observed and handled.
+
+##### Locking correctness
+- [ ] Lock object is private and dedicated.
+- [ ] Critical section is short; no `await` inside `lock`.
+- [ ] Nested locks follow a consistent acquisition order.
+- [ ] Shared state is actually protected by the same synchronization strategy.
+- [ ] `Monitor.Wait` checks its condition in a `while` loop.
+- [ ] `Pulse` versus `PulseAll` is chosen intentionally.
+- [ ] `SemaphoreSlim.Release()` is in `finally`; configured capacity is correct.
+- [ ] Mutex ownership, timeout, abandoned-mutex recovery, and release are handled correctly.
+
+##### Distributed reliability
+- [ ] Background jobs are durable if they must survive restarts.
+- [ ] Duplicate delivery/retries are safe through idempotency.
+- [ ] Retry policy is bounded and distinguishes transient from permanent failures.
+- [ ] Queue depth, failures, latency, and dead-letter messages are observable.
+- [ ] Any cluster-wide limit/lock is implemented with a distributed-aware mechanism.
+- [ ] Long-running jobs have status, cancellation/timeout strategy, and recovery behavior.
+
+#### 8. Interview summary
+
+> “I use async/await to avoid blocking during I/O, not to disguise CPU work. I use `lock` for short in-process critical sections, `Monitor` for condition signaling, `Mutex` for suitable cross-process single-machine coordination, and `SemaphoreSlim` for async concurrency limits. For durable multi-instance background processing, I use queues or job stores, idempotent handlers, bounded retries, and observability.”
+
+---

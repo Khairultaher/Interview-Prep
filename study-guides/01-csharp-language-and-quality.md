@@ -1,22 +1,20 @@
 # C# Language and Code Quality
 
-This guide combines the distinct source materials below. Original explanations, examples, and interview questions are retained; exact duplicate source files are excluded and documented in the library index.
+Each concept is explained once. Where several notes covered the same topic, they have been merged into a single section, and related topics in other guides are linked instead of repeated.
 
-## Included source materials
+## Contents
 
-- [modern-csharp-senior-architect-interview-guide.md](#modern-csharp-senior-architect-interview-guide-md)
-- [csharp_data_types_and_collections_cheatsheet.md](#csharp-data-types-and-collections-cheatsheet-md)
-- [senior_csharp_code_review_refactoring_interview_guide.md](#senior-csharp-code-review-refactoring-interview-guide-md)
-- [shallow-vs-deep-clone.md](#shallow-vs-deep-clone-md)
+- [Modern C# Interview Guide: Senior Developer vs. Architect](#modern-csharp-senior-architect-interview-guide-md)
+- [C# Data Types and Collections Cheat Sheet](#csharp-data-types-and-collections-cheatsheet-md)
+- [Senior C#/.NET Developer: Code Review, Refactoring & Interview Guide](#senior-csharp-code-review-refactoring-interview-guide-md)
+- [Shallow Clone vs. Deep Clone in C#](#shallow-vs-deep-clone-md)
+- [Additional Questpond question sets](#additional-questpond-question-sets)
+
 ---
 
 <a id="modern-csharp-senior-architect-interview-guide-md"></a>
 
-## Source: Modern C# Interview Guide: Senior Developer vs. Architect
-
-*Imported from `modern-csharp-senior-architect-interview-guide.md`.*
-
-### Modern C# Interview Guide: Senior Developer vs. Architect
+## Modern C# Interview Guide: Senior Developer vs. Architect
 
 A practical guide to modern C# features, production examples, and refactoring legacy code. It focuses on features that improve correctness, readability, maintainability, and performance in day-to-day .NET development.
 
@@ -260,39 +258,9 @@ Never put passwords, access tokens, secrets, or unnecessary personal data in log
 
 ##### 2.11 Dependency injection and service lifetimes
 
-```csharp
-services.AddScoped<IOrderService, OrderService>();
-services.AddScoped<IOrderRepository, OrderRepository>();
-```
+Transient / Scoped / Singleton, captive dependencies, and background-worker scopes are explained once in [.NET and ASP.NET Core → Dependency Injection](03-dotnet-and-aspnetcore.md#dependency-injection). Key rule: never capture a scoped service inside a singleton.
 
-- **Transient:** new instance each time it is requested.
-- **Scoped:** one instance per DI scope (commonly one ASP.NET Core request).
-- **Singleton:** one instance for the service provider's lifetime.
-
-Do not capture a scoped service inside a singleton. Singleton services must be safe for concurrent use where they are shared concurrently. A hosted service that needs scoped dependencies should create a scope when doing scoped work.
-
-##### 2.12 EF Core: projection, tracking, and query shape
-
-```csharp
-var orders = await _dbContext.Orders
-    .AsNoTracking()
-    .Where(order => order.CustomerId == customerId)
-    .Select(order => new OrderSummary(
-        order.Id,
-        order.CreatedAt,
-        order.Total))
-    .ToListAsync(cancellationToken);
-```
-
-**Production checklist**
-- Inspect generated SQL and query plans for slow queries.
-- Add indexes based on actual query patterns and execution plans.
-- Avoid loading entire graphs when a projection is sufficient.
-- Detect N+1 queries and accidental repeated database calls.
-- Use transactions when a group of changes must be atomic.
-- Pass cancellation tokens to supported asynchronous operations.
-
-##### 2.13 Exceptions, validation, and error contracts
+##### 2.12 Exceptions, validation, and error contracts
 
 ```csharp
 public static void ValidateQuantity(int quantity)
@@ -307,7 +275,7 @@ public static void ValidateQuantity(int quantity)
 
 Use exceptions for exceptional failures, not as the routine control flow for expected outcomes. Validate untrusted input at system boundaries, enforce domain invariants in the domain model, and return consistent API error responses (for example, Problem Details in ASP.NET Core).
 
-##### 2.14 Cancellation and resilience at service boundaries
+##### 2.13 Cancellation and resilience at service boundaries
 
 ```csharp
 public async Task<ProductDto?> GetProductAsync(
@@ -685,11 +653,7 @@ Use these as the source of truth for language details and version-specific behav
 
 <a id="csharp-data-types-and-collections-cheatsheet-md"></a>
 
-## Source: C# Data Types and Collections Cheat Sheet
-
-*Imported from `csharp_data_types_and_collections_cheatsheet.md`.*
-
-### C# Data Types and Collections Cheat Sheet
+## C# Data Types and Collections Cheat Sheet
 
 A deduplicated reference for C#/.NET interviews and everyday
 development. Examples target modern C# and .NET 6+ unless noted.
@@ -1131,46 +1095,9 @@ Key members: `Enqueue`, `EnqueueRange` (modern .NET), `Dequeue`,
 `TryDequeue`, `Peek`, `TryPeek`, `Contains`, `Clear`, `ToArray`,
 `CopyTo`, `Count`.
 
-##### `PriorityQueue<TElement, TPriority>` (min-priority first)
+##### `PriorityQueue<TElement, TPriority>` and heaps
 
-Available in .NET 6+. It is a priority queue backed by a **min-heap** by
-default: the smallest priority is dequeued first. It is not
-automatically a stable queue for equal priorities.
-
-``` csharp
-var pq = new PriorityQueue<string, int>();
-pq.Enqueue("low urgency", 10);
-pq.Enqueue("urgent", 1);
-string first = pq.Dequeue(); // "urgent"
-
-pq.Enqueue("normal", 5);
-pq.TryPeek(out string? element, out int priority);
-pq.TryDequeue(out string? nextElement, out int nextPriority);
-```
-
-Key members: `Enqueue`, `EnqueueDequeue`, `Dequeue`, `TryDequeue`,
-`Peek`, `TryPeek`, `DequeueEnqueue`, `Clear`, `EnsureCapacity`,
-`TrimExcess`, `UnorderedItems`, `Count`.
-
-##### Min-heap and max-heap
-
-.NET's built-in `PriorityQueue<TElement, TPriority>` is a min-priority
-queue. There is no separate built-in public `MinHeap<T>` or `MaxHeap<T>`
-collection in the base class library. Use a priority comparer for
-max-priority behavior:
-
-``` csharp
-var maxHeap = new PriorityQueue<int, int>(
-    Comparer<int>.Create((x, y) => y.CompareTo(x)));
-
-maxHeap.Enqueue(10, 10);
-maxHeap.Enqueue(30, 30);
-maxHeap.Enqueue(20, 20);
-int maximum = maxHeap.Dequeue(); // 30
-```
-
-Here the reversed comparer makes larger numeric priorities come out
-first. For complex priorities, define an appropriate comparer.
+Built-in min-priority queue (.NET 6+); there is no separate `MinHeap<T>`/`MaxHeap<T>`. Usage, max-heap comparers, Top-K, and pitfalls are explained once in [Data Structures and Algorithms → Priority queues and binary heaps](02-data-structures-and-algorithms.md#4-priority-queues-and-binary-heaps).
 
 ##### `LinkedList<T>`
 
@@ -1397,11 +1324,7 @@ materialization occurs.
 
 <a id="senior-csharp-code-review-refactoring-interview-guide-md"></a>
 
-## Source: Senior C#/.NET Developer: Code Review, Refactoring & Interview Guide
-
-*Imported from `senior_csharp_code_review_refactoring_interview_guide.md`.*
-
-### Senior C#/.NET Developer: Code Review, Refactoring & Interview Guide
+## Senior C#/.NET Developer: Code Review, Refactoring & Interview Guide
 
 A practical reference for senior-developer interviews (“viva”) and for reviewing code and mentoring a .NET team. Examples target modern C# and ASP.NET Core; adapt them to the project's language version and conventions.
 
@@ -1485,32 +1408,9 @@ options ??= new AppOptions();
 
 Use nullable reference types (`string?`, `User?`) intentionally; do not use null-conditional operators to hide invalid states that should be rejected.
 
-##### 2.4 Pattern matching and switch expressions
+##### 2.4 Type patterns
 
-```csharp
-// Old
-string GetStatus(int code)
-{
-    switch (code)
-    {
-        case 200: return "OK";
-        case 400: return "Bad Request";
-        case 500: return "Server Error";
-        default: return "Unknown";
-    }
-}
-
-// Modern
-static string GetStatus(int code) => code switch
-{
-    200 => "OK",
-    400 => "Bad Request",
-    500 => "Server Error",
-    _ => "Unknown"
-};
-```
-
-Pattern matching can combine type checks and variable capture:
+Switch expressions are shown above (section 2.4 and Case 3). Pattern matching can also combine a type check with variable capture:
 
 ```csharp
 if (value is Customer customer && customer.IsActive)
@@ -1528,17 +1428,7 @@ public decimal CalculateTotal(decimal price, int quantity)
     => price * quantity;
 ```
 
-##### 2.6 Records and value-based equality
-
-Use records for data-centric values where value equality is useful, such as commands, query results, and DTOs.
-
-```csharp
-public sealed record CreateUserRequest(string Name, string Email);
-```
-
-A record is **not automatically deeply immutable**: referenced objects or collection properties can still be mutable. Use ordinary classes for entities with identity and lifecycle when that fits the domain model better.
-
-##### 2.7 Dictionary lookup
+##### 2.6 Dictionary lookup
 
 ```csharp
 // Avoid two lookups
@@ -1551,7 +1441,7 @@ return rates.TryGetValue(country, out var rate)
     : amount * defaultRate;
 ```
 
-##### 2.8 String building
+##### 2.7 String building
 
 For a small fixed number of interpolations, normal interpolation is clear. For repeated appends in a loop, consider `StringBuilder`.
 
@@ -1608,23 +1498,6 @@ public decimal CalculateDiscount(Order order)
 
 The method parameter is non-nullable in the refactored version, but the runtime guard still protects callers that pass null. Keep the exception behavior and business rules consistent with the existing contract.
 
-##### Example: dependency injection
-
-```csharp
-public interface IEmailSender
-{
-    Task SendAsync(string recipient, string subject, CancellationToken ct);
-}
-
-public sealed class OrderNotifier(IEmailSender emailSender)
-{
-    public Task NotifyAsync(string email, CancellationToken ct) =>
-        emailSender.SendAsync(email, "Order confirmed", ct);
-}
-```
-
-Register the implementation in the composition root. DI helps testing and decoupling, but do not create interfaces for every class without a clear benefit.
-
 #### 4. Async, EF Core, and performance
 
 ##### Async I/O
@@ -1642,16 +1515,7 @@ var body = await httpClient.GetStringAsync(url, cancellationToken);
 
 ##### EF Core query shape
 
-```csharp
-var users = await dbContext.Users
-    .AsNoTracking()
-    .Where(user => user.IsActive)
-    .OrderBy(user => user.Name)
-    .Select(user => new UserListItem(user.Id, user.Name))
-    .ToListAsync(cancellationToken);
-```
-
-Key review checks:
+See the projection example in section 2.6 above; EF Core performance is covered in depth in [EF Core, LINQ, and SQL](05-efcore-linq-and-sql.md). Key review checks:
 
 - Project only the fields needed by the caller.
 - Use `AsNoTracking()` for read-only entity queries when change tracking is unnecessary.
@@ -1683,14 +1547,7 @@ A senior review should ask:
 
 #### 6. Clean Architecture and CQRS
 
-Use boundaries to protect business rules, not merely to create folders.
-
-- **Domain:** Core business concepts and invariants; should not depend on infrastructure.
-- **Application:** Use cases, orchestration, and application contracts.
-- **Infrastructure:** EF Core, external services, messaging, file storage, and implementations.
-- **Presentation:** HTTP endpoints, authentication integration, request/response mapping.
-
-CQRS separates read and write models when that separation solves a real problem. It does **not** automatically require microservices, event sourcing, separate databases, or a message broker. For simple CRUD features, a simpler design may be better.
+Use boundaries to protect business rules, not merely to create folders. CQRS does **not** automatically require microservices, event sourcing, or a message broker. Layers and trade-offs are explained in [Architecture and Design Patterns](06-architecture-and-design-patterns.md).
 
 #### 7. Testing and safe refactoring workflow
 
@@ -1766,11 +1623,7 @@ A refactor should preserve externally observable behavior unless the change expl
 
 <a id="shallow-vs-deep-clone-md"></a>
 
-## Source: Shallow Clone vs. Deep Clone in C#
-
-*Imported from `shallow-vs-deep-clone.md`.*
-
-### Shallow Clone vs. Deep Clone in C#
+## Shallow Clone vs. Deep Clone in C#
 
 Cloning creates a new object based on an existing object. The key difference is whether referenced objects are shared or copied.
 
@@ -1892,18 +1745,10 @@ The `Address` object is explicitly created again, so changes to the cloned addre
 
 ## Additional Questpond question sets
 
-### Questpond source: 01-oop-solid.md
-
----
-
-
-
----
-
-#### OOP / SOLID
+### OOP / SOLID
 
 ###### 1. What is a method signature? (PDF p. 4)
-**Answer:** In C#, a method signature consists of its name and parameter types, order, and passing modes (`ref`, `out`, or `in`). Return type and parameter names are not part of the signature, so methods cannot be overloaded by return type alone.
+**Answer:** In C#, a method signature consists of its <b>name and parameter types</b>, order, and passing modes (`ref`, `out`, or `in`). Return type and parameter names are not part of the signature, so methods cannot be overloaded by return type alone.
 
 ###### 2. What is the order of constructor execution? (PDF p. 4)
 **Answer:** For a derived object, static initialization runs first (base type before derived type); then instance field initializers run base-to-derived, followed by instance constructors base-to-derived. A derived constructor's `base(...)` constructor call happens before its own body.
@@ -1982,15 +1827,7 @@ The `Address` object is explicitly created again, so changes to the cloned addre
 
 ---
 
-### Questpond source: 02-csharp.md
-
----
-
-
-
----
-
-#### C#
+### C#
 
 ##### Theory questions
 

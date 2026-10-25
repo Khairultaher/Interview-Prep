@@ -18,27 +18,21 @@ A topic-organized library compiled from the Markdown and PDF materials in `../so
 12. [Angular interview questions](11-angular-interview-questions.md)
 13. [Azure DevOps, Docker, and Kubernetes / AKS](12-azure-devops-docker-kubernetes.md)
 14. [Azure cloud administration for backend developers](13-azure-cloud-administration-for-backend.md)
-15. [Questpond employer interviews and full PDF question bank](15-questpond-employer-interviews-and-full-pdf.md)
+15. [Questpond employer-specific interview questions](15-questpond-employer-interviews-and-full-pdf.md)
 
-## Completeness and duplicate handling
+## How duplicates are handled
 
-The source-directory audit found 45 files: all 40 distinct source documents are included in full under their subject guides, and five exact duplicates are documented below. Every Markdown source and all selectable text from each distinct PDF were checked against the compiled guides. PDF inspection found no embedded images; one page at the end of `C# Data Structures Guide.pdf` (and its duplicate `f.pdf`) is blank. Related documents are grouped together; where non-identical sources cover the same concept, their examples and interview angles are retained rather than silently discarded. Headings are shifted down to make the combined guides navigable; source body text and examples are retained. The sources are left unchanged.
+**Each concept is explained once.** When several source notes covered the same topic, their unique details were merged into one section, and the repeated explanations were removed. When a topic belongs to another guide, a link points there instead of repeating it. For example:
 
-These exact duplicates were omitted because their contents match byte-for-byte or, for PDFs, their extracted text matches exactly:
+- **Middleware** (`Use`/`Run`/`Map`, ordering, middleware vs filters) lives in guide 03. The three near-identical ChatGPT middleware transcripts were merged into one "Extra Senior Notes" section.
+- **Dependency injection** lives in guide 03. The three DI guides were merged into one section.
+- **Collections** (`List`, `Dictionary`, `Stack`, `Queue`, sets) live in guide 01. **Sorting, comparers, heaps, and `PriorityQueue`** live in guide 02.
+- **HTTP headers** live in guide 04. Two header guides were merged into one.
+- **EF Core** has one main guide in 05. The four overlapping EF Core notes were folded into it, and only the questions not covered there were kept.
+- **Async, threads, and locking** (`lock`, `Monitor`, `SemaphoreSlim`, `ConfigureAwait`) live in guide 07. **Distributed jobs, distributed locks, and resilience** live in guide 08.
+- **Questpond `RealTimeInterviewQuestions.pdf`**: its raw page-by-page text is no longer copied. Every question in it is answered in the employer notes (guide 15) or in the matching topic guide. The original PDF is still at `B:\TUTS\Questpond\RealTimeInterviewQuestions.pdf`.
 
-- `23-design-patterns-csharp-senior-viva (1).md` duplicates `23-design-patterns-csharp-senior-viva.md`.
-- `f.pdf` duplicates `C# Data Structures Guide.pdf`.
-- `NET middleware for senior devs (2).pdf`, `(3).pdf`, and `(4).pdf` duplicate `(1).pdf`.
-
-`NET middleware for senior devs.pdf` is retained as a separate version because its extracted text differs from the numbered copies.
-
-The JavaScript and Angular guides are copied from the dedicated Questpond question files. The React/Next.js guide consolidates React questions found across the Questpond interview PDF and notes, then adds clearly labeled supplementary React and Next.js Q&A sections because coverage of those frameworks in the Questpond materials is limited.
-
-The Azure DevOps, Docker, and Kubernetes guide consolidates deployment, CI/CD, container, and AKS interview material from Questpond notes and the interview PDF.
-
-The Azure cloud-administration guide uses Azure services and project examples named in the H1B CV, then adds administration context. The backend viva file itself contains backend topics, not an inventory of Azure services.
-
-The Questpond folder has also been audited end-to-end. Its complete topic-specific Markdown question sets are included in their matching guides; all employer-specific interview notes and all 70 extracted pages from `RealTimeInterviewQuestions.pdf` are preserved in the Questpond interview archive. `settings.json` is workspace configuration, not interview-preparation material, so it is not included.
+Chat transcript labels ("You said", "ChatGPT said") and import labels have been removed. The explanations keep their original simple, friendly tone. The raw sources in `../source/` are unchanged.
 
 ## Source coverage
 
@@ -111,6 +105,8 @@ The Questpond folder has also been audited end-to-end. Its complete topic-specif
 - `csharp-concurrency-span-stack-queue.md`
 - `csharp-task-parallelism-interview-notes.md`
 - `dotnet-threading-async-await-senior-viva.md`
+- `senior_dotnet_async_locking_distributed_guide.md` (async/locking part)
+- `senior_dotnet_architect_viva_prep.md` (async internals and `ConfigureAwait`)
 
 ### [System Design and Distributed Systems](08-system-design-and-distributed-systems.md)
 
@@ -118,7 +114,7 @@ The Questpond folder has also been audited end-to-end. Its complete topic-specif
 - `high-traffic-dotnet-api-blueprint.md`
 - `saga-pattern-dotnet.md`
 - `async-messaging-dotnet-viva-guide.md`
-- `senior_dotnet_async_locking_distributed_guide.md`
+- `senior_dotnet_async_locking_distributed_guide.md` (distributed part; the async/locking part is in guide 07)
 
 ### [JavaScript Interview Questions](09-javascript-interview-questions.md)
 
@@ -153,9 +149,9 @@ The Questpond folder has also been audited end-to-end. Its complete topic-specif
 - `B:\TUTS\H1B\Backend-Development-Viva-Preparation.md` (backend topics used for context; it does not enumerate Azure services)
 - Supplementary Azure identity, networking, compute, data, messaging, governance, monitoring, and security service guide
 
-### [Questpond Employer Interviews and Full PDF Question Bank](15-questpond-employer-interviews-and-full-pdf.md)
+### [Questpond Employer-Specific Interview Questions](15-questpond-employer-interviews-and-full-pdf.md)
 
-All employer-specific Questpond interview notes are preserved in full here, including multi-topic reports already mined for questions in the focused guides. The complete 70-page `RealTimeInterviewQuestions.pdf` is also included as page-organized extracted text.
+All employer-specific Questpond interview notes, with short answers. The raw text of `RealTimeInterviewQuestions.pdf` is not repeated here because its questions are answered in this guide or the topic guides.
 
 - `B:\TUTS\Questpond\14-globallogic-interview-questions.md`
 - `B:\TUTS\Questpond\20-accenture-first-round.md`
