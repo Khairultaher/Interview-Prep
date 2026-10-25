@@ -744,999 +744,343 @@ The most important skill is not memorizing labels. It is recognizing the structu
 
 ## Source: C# Data Structures Guide
 
-*Imported from `C# Data Structures Guide.pdf`.*
+*Organized from the conversation imported from `C# Data Structures Guide.pdf`.*
 
-May 21, 2025 at 8:27 AM
+- **User:** Requested a problem-solving reference with examples and useful members, then asked for array operations, heap comparers, and linked-list details, followed by an alternative max-heap comparer.
+- **ChatGPT:** Supplied the examples and descriptions below. Repeated material has been consolidated.
+- **Correction:** `Comparer<int>.Default.Reverse()` is not a standard .NET API. Use a reversed comparer such as `Comparer<int>.Create((a, b) => b.CompareTo(a))`; avoid subtraction comparers because integer overflow can cause incorrect ordering.
 
+## Core types
 
-You said:
+### `string`
 
+**ChatGPT's description:** Immutable sequence of characters.
 
-                             list of all C# data structure like— string, date, list,
-                             dictionary, set, stack, queue, praiorityQueue (min heap,
-                             max heap), linked list, tree, try, tuple, record. with example
-                             and all usefull function associated with them are need in
-                             problem solving. as well ass list all i missed . dont miss
-                             anything that we get after clicking dot after the data
-                             structure
+```csharp
+string name = "Afifa";
 
-   Memory updated
+int length = name.Length;
+string upper = name.ToUpper();
+bool contains = name.Contains("fi");
+bool startsWith = name.StartsWith("A");
+int firstIndex = name.IndexOf("i");
+string part = name.Substring(1, 2);
+string replaced = name.Replace("fi", "xy");
+string[] words = name.Split(' ');
+string joined = string.Join(", ", words);
+bool isEmpty = string.IsNullOrEmpty(name);
+bool isBlank = string.IsNullOrWhiteSpace(name);
+```
 
-ChatGPT said:
+Common members include `Length`, `Contains`, `StartsWith`, `EndsWith`, `IndexOf`, `LastIndexOf`, `Substring`, `Replace`, `Split`, `ToUpper`, `ToLower`, and `string.Join`.
 
-Here is a comprehensive guide to all core C# data structures, including examples and
-commonly used members (properties, methods, and operators)—ideal for problem-
-solving, interviews, and advanced development:
+### `DateTime`
 
+**ChatGPT's description:** Used for date and time manipulation.
 
+```csharp
+DateTime now = DateTime.Now;
+DateTime birthday = new DateTime(1993, 12, 25);
+DateTime tomorrow = now.AddDays(1);
+DayOfWeek weekday = birthday.DayOfWeek;
+string formatted = birthday.ToString("yyyy-MM-dd");
 
+if (DateTime.TryParse("2024-05-01", out DateTime parsed))
+{
+    Console.WriteLine(parsed);
+}
+```
 
-✅ 1.        string
-Immutable sequence of characters.
+Common members include `Year`, `Month`, `Day`, `DayOfWeek`, `AddDays`, `AddMonths`, `Subtract`, `ToString`, and `DateTime.TryParse`.
 
+### Arrays
 
-       C#
+**ChatGPT's description:** Fixed-size, indexed collection.
 
-  string name = "Afifa";
+```csharp
+int[] values = { 5, 2, 3, 1 };
 
+Array.Sort(values);
+Console.WriteLine(string.Join(", ", values)); // 1, 2, 3, 5
 
+Array.Sort(values, (a, b) => b.CompareTo(a)); // Descending
+Array.Reverse(values);
+Array.Fill(values, 9);
 
-Useful members:
+int index = Array.IndexOf(values, 9);
+int[] copy = new int[values.Length];
+Array.Copy(values, copy, values.Length);
+int length = values.Length;
+```
 
+`Array.Sort` also supports a range (`index`, `length`) and an `IComparer<T>` for custom ordering. Use `Array.Fill(array, value, startIndex, count)` to fill only part of an array.
 
-       C#
+### `List<T>`
 
-  name.Length
-  name.ToUpper(), name.ToLower()
-  name.Contains("fi")
-  name.StartsWith("A"), name.EndsWith("a")
-  name.IndexOf("i"), name.LastIndexOf("f")
-  name.Substring(1, 2)
-  name.Replace("fi", "xy")
-  name.Split(' ')
-  string.Join(",", array)
-  string.IsNullOrEmpty(name), string.IsNullOrWhiteSpace(name)
+**ChatGPT's description:** Resizable array.
 
+```csharp
+List<int> numbers = new() { 1, 3, 5 };
+numbers.Add(7);
+numbers.AddRange(new[] { 9, 11 });
+numbers.Insert(1, 2);
+numbers.Sort();
+numbers.Sort((a, b) => b.CompareTo(a)); // Descending
+numbers.Reverse();
 
+bool contains = numbers.Contains(5);
+int index = numbers.IndexOf(5);
+numbers.Remove(5);
+numbers.RemoveAt(0);
+int count = numbers.Count;
+numbers.Clear();
+```
 
+Common members include `Add`, `AddRange`, `Insert`, `Remove`, `RemoveAt`, `Contains`, `IndexOf`, `Sort`, `Reverse`, `ForEach`, `Count`, and `Clear`.
 
-✅ 2.   DateTime
-Used for date and time manipulation.
+### `Dictionary<TKey, TValue>`
 
+**ChatGPT's description:** Key-value collection.
 
-       C#
+```csharp
+Dictionary<string, int> counts = new()
+{
+    ["apple"] = 3,
+    ["banana"] = 2
+};
 
-  DateTime now = DateTime.Now;
-  DateTime specific = new DateTime(2024, 12, 25);
+counts["banana"] = 5;
+counts.TryGetValue("banana", out int bananaCount);
+bool hasApple = counts.ContainsKey("apple");
+IEnumerable<string> keys = counts.Keys;
+IEnumerable<int> values = counts.Values;
+counts.Remove("apple");
+```
 
+Common members include `Add`, `Remove`, `ContainsKey`, `ContainsValue`, `TryGetValue`, `Keys`, `Values`, `Count`, and `Clear`. Prefer `TryGetValue` when a key may be absent.
 
+### `HashSet<T>` and `SortedSet<T>`
 
-Useful members:
+**ChatGPT's description:** A hash set stores unique elements without ordering; a sorted set stores unique elements in sorted order.
 
+```csharp
+HashSet<int> unique = new() { 1, 2, 3 };
+unique.Add(3); // No duplicate is added.
+unique.UnionWith(new[] { 4, 5 });
+unique.IntersectWith(new[] { 2, 4, 6 });
+bool hasThree = unique.Contains(3);
 
-       C#
+SortedSet<int> ordered = new() { 3, 1, 2 };
+int minimum = ordered.Min;
+int maximum = ordered.Max;
+```
 
-  now.Year, now.Month, now.Day
-  now.AddDays(5), now.AddMonths(-1)
-  now.Subtract(anotherDate)
-  now.ToString("yyyy-MM-dd")
-  DateTime.TryParse("2024-05-01", out var dt)
+Common set members include `Add`, `Remove`, `Contains`, `UnionWith`, `IntersectWith`, `ExceptWith`, and `SymmetricExceptWith`.
 
+### `Stack<T>`
 
+**ChatGPT's description:** LIFO (last in, first out).
 
+```csharp
+Stack<int> stack = new();
+stack.Push(10);
+stack.Push(20);
 
-✅ 3.   List<T>
-Dynamic array.
+int top = stack.Peek(); // 20; does not remove it
+int removed = stack.Pop(); // 20
+bool contains = stack.Contains(10);
+```
 
+Common members include `Push`, `Pop`, `Peek`, `Contains`, `Count`, and `Clear`. Use `TryPop` or `TryPeek` when the stack may be empty.
 
-       C#
+### `Queue<T>`
 
-  List<int> numbers = new() {1, 2, 3};
+**ChatGPT's description:** FIFO (first in, first out).
 
+```csharp
+Queue<string> queue = new();
+queue.Enqueue("first");
+queue.Enqueue("second");
 
+string next = queue.Peek(); // "first"; does not remove it
+string removed = queue.Dequeue(); // "first"
+```
 
-Useful members:
+Common members include `Enqueue`, `Dequeue`, `Peek`, `Contains`, `Count`, and `Clear`. Use `TryDequeue` or `TryPeek` when the queue may be empty.
 
+### `PriorityQueue<TElement, TPriority>`
 
-       C#
+**ChatGPT's description:** A min-priority queue by default; the element with the smallest priority is dequeued first.
 
-  numbers.Add(4), numbers.AddRange(new[] {5, 6})
-  numbers.Remove(3), numbers.RemoveAt(0)
-  numbers.Insert(1, 99)
-  numbers.Contains(2)
-  numbers.IndexOf(2)
-  numbers.Sort(), numbers.Reverse()
-  numbers.Count, numbers.Clear()
-  numbers.ForEach(Console.WriteLine)
-✅ 4.   Dictionary<TKey, TValue>
-Key-value pairs.
+```csharp
+PriorityQueue<string, int> minHeap = new();
+minHeap.Enqueue("lower priority", 5);
+minHeap.Enqueue("higher priority", 1);
+string next = minHeap.Dequeue(); // "higher priority"
+```
 
+To make a max-priority queue, reverse the priority comparer:
 
-       C#
+```csharp
+PriorityQueue<int, int> maxHeap = new(
+    Comparer<int>.Create((a, b) => b.CompareTo(a)));
 
-  var dict = new Dictionary<string, int> { ["apple"] = 3 };
+maxHeap.Enqueue(10, 10);
+maxHeap.Enqueue(3, 3);
+int maximum = maxHeap.Dequeue(); // 10
+```
 
+Another option for non-negative numeric priorities is to enqueue the negated priority and keep the default comparer. Common members include `Enqueue`, `Dequeue`, `Peek`, `TryDequeue`, `TryPeek`, `Count`, and `Clear`.
 
+### `LinkedList<T>`
 
-Useful members:
+**ChatGPT's description:** Doubly linked list; each node links to both its previous and next nodes.
 
+```csharp
+LinkedList<int> items = new();
+items.AddFirst(1);
+LinkedListNode<int> three = items.AddLast(3);
+items.AddAfter(three, 4);
+items.AddBefore(three, 2);
 
-       C#
+LinkedListNode<int>? node = items.Find(3);
+items.RemoveFirst();
+items.RemoveLast();
+```
 
-  dict.Add("banana", 5)
-  dict.Remove("apple")
-  dict.ContainsKey("banana")
-  dict.ContainsValue(5)
-  dict["banana"] = 6
-  dict.Keys, dict.Values
-  dict.TryGetValue("banana", out var value)
+Common members include `AddFirst`, `AddLast`, `AddBefore`, `AddAfter`, `Find`, `Remove`, `RemoveFirst`, `RemoveLast`, `First`, `Last`, and `Count`. The .NET type is doubly linked; it does not provide a separate built-in `DoublyLinkedList<T>` type.
 
+### `Tuple`, `ValueTuple`, and records
 
+**ChatGPT's description:** Tuples group values; records provide value-oriented equality and concise data models.
 
+```csharp
+Tuple<string, int> referenceTuple = Tuple.Create("Afifa", 11);
+string tupleName = referenceTuple.Item1;
 
-✅ 5.   HashSet<T>
-Unordered collection with unique elements.
+(string Name, int Age) valueTuple = ("Afifa", 11);
+var (name, age) = valueTuple;
+```
 
+```csharp
+public class Program
+{
+    public static void Main()
+    {
+        Person first = new("Afifa", 30);
+        Person older = first with { Age = 31 };
+    }
+}
 
-       C#
+public record Person(string Name, int Age);
+```
 
-  HashSet<int> set = new() {1, 2, 3};
+Use named `ValueTuple` elements for lightweight local groupings. Use records when a named type with value-based equality is useful. Records are not always immutable: `record` properties can be mutable; positional record properties are init-only by default.
 
+## Other useful types
 
+### Custom trees and tries
 
-Useful members:
+**ChatGPT's description:** Trees model hierarchical data; tries are prefix trees often used for string lookup and autocomplete. These are custom structures, not one general-purpose tree or trie type in the base collections library.
 
+```csharp
+class TreeNode
+{
+    public int Value { get; set; }
+    public List<TreeNode> Children { get; } = new();
+}
 
-       C#
+class TrieNode
+{
+    public Dictionary<char, TrieNode> Children { get; } = new();
+    public bool IsEndOfWord { get; set; }
+}
+```
 
-  set.Add(4), set.Remove(2)
-  set.Contains(3)
-  set.UnionWith(otherSet), set.IntersectWith()
-  set.ExceptWith(), set.SymmetricExceptWith()
+### `Span<T>` and `ReadOnlySpan<T>`
 
+**ChatGPT's description:** Stack-only views over contiguous memory, useful for allocation-conscious processing.
 
+```csharp
+Span<int> values = stackalloc int[3];
+values[0] = 1;
+values[1] = 2;
+values[2] = 3;
 
+ReadOnlySpan<int> readOnlyValues = values;
+```
 
-✅ 6.   Stack<T>
-LIFO data structure.
-       C#
-  Stack<int> stack = new();
-  stack.Push(1);
-  int top = stack.Pop();
+### `IEnumerable<T>` and `IQueryable<T>`
 
+**ChatGPT's description:** Interfaces commonly used for sequence processing and LINQ. `IEnumerable<T>` represents in-memory or streaming iteration; `IQueryable<T>` allows a provider to interpret an expression tree, often to translate it to a remote query.
 
+```csharp
+int[] numbers = { 1, 2, 3, 4 };
+IEnumerable<int> filtered = numbers.Where(value => value > 2);
+```
 
-Useful members:
+### `ObservableCollection<T>`
 
+**ChatGPT's description:** Collection that raises change notifications, commonly used in UI frameworks such as WPF.
 
-       C#
+```csharp
+ObservableCollection<string> names = new();
+names.CollectionChanged += (_, _) => Console.WriteLine("Changed");
+names.Add("Afifa");
+```
 
-  stack.Push(5), stack.Pop()
-  stack.Peek(), stack.Contains(3)
-  stack.Count, stack.Clear()
+### Sorted key-value collections
 
+**ChatGPT's description:** Both keep keys ordered; `SortedList<TKey, TValue>` and `SortedDictionary<TKey, TValue>` have different performance characteristics and are not interchangeable in every workload.
 
+```csharp
+SortedList<string, int> sortedList = new()
+{
+    ["a"] = 1,
+    ["b"] = 2
+};
 
+SortedDictionary<string, int> sortedDictionary = new()
+{
+    ["a"] = 1,
+    ["b"] = 2
+};
+```
 
-✅ 7.   Queue<T>
-FIFO data structure.
+### Concurrent and immutable collections
 
+**ChatGPT's description:** Concurrent collections provide thread-safe operations; immutable collections return new collection instances when changed. These types are in the `System.Collections.Concurrent` and `System.Collections.Immutable` namespaces.
 
-       C#
+```csharp
+ConcurrentDictionary<string, int> cache = new();
+cache.TryAdd("x", 1);
+cache.AddOrUpdate("x", 1, (_, current) => current + 1);
 
-  Queue<string> queue = new();
-  queue.Enqueue("task1");
-  string next = queue.Dequeue();
+ImmutableList<int> original = ImmutableList.Create(1, 2, 3);
+ImmutableList<int> updated = original.Add(4); // original is unchanged
+```
 
+Other concurrent types include `ConcurrentQueue<T>`, `ConcurrentStack<T>`, and `ConcurrentBag<T>`. Immutable counterparts include `ImmutableArray<T>`, `ImmutableDictionary<TKey, TValue>`, and `ImmutableHashSet<T>`.
 
+### `BitArray`
 
-Useful members:
+**ChatGPT's description:** Compact collection of Boolean values, useful for flags.
 
+```csharp
+BitArray flags = new(8);
+flags[0] = true;
+bool firstFlag = flags[0];
+```
 
-       C#
+## User follow-up: alternative max-heap comparer
 
-  queue.Enqueue(), queue.Dequeue()
-  queue.Peek(), queue.Contains()
-  queue.Count, queue.Clear()
+**User said:** They asked whether there was an alternative to constructing a reversed comparer inline for `PriorityQueue<int, int>`.
 
+**ChatGPT said:** The response suggested a reversed comparer and negating priorities. The supported comparer-based approach is shown in the `PriorityQueue<TElement, TPriority>` section above. Negated priorities are only suitable when the priority type and value range make negation safe.
 
+## IntelliSense and member discovery
 
-
-✅ 8.   PriorityQueue<TElement, TPriority> (Min-Heap by default)
-
-
-       C#
-
-  var pq = new PriorityQueue<string, int>();
-  pq.Enqueue("task1", 1);
-  pq.Enqueue("task2", 0);
-
-
-
-Useful members:
-       C#
-  pq.Enqueue("item", priority)
-  pq.Dequeue(), pq.Peek()
-  pq.Count, pq.Clear()
-
-
-
-➡️ Max-Heap workaround:
-       C#
-
-  pq.Enqueue("item", -priority)   // invert the priority
-
-
-
-
-✅ 9.    LinkedList<T>
-
-
-       C#
-
-  LinkedList<int> list = new();
-  list.AddLast(1); list.AddFirst(0);
-
-
-
-Useful members:
-
-
-       C#
-
-  list.AddFirst(value), list.AddLast(value)
-  list.AddBefore(node, value), list.AddAfter(node, value)
-  list.RemoveFirst(), list.RemoveLast()
-  list.Find(value), list.Contains(value)
-
-
-
-
-✅ 10.       Tuple<T1, T2, ..., T7>
-
-
-       C#
-
-  var t = Tuple.Create("Afifa", 100);
-  var name = t.Item1;
-
-
-
-For better readability use ValueTuple :
-
-
-       C#
-
-  (string name, int score) = ("Afifa", 100);
-✅ 11.       Record (C# 9+)
-Immutable reference type with value-based equality.
-
-
-       C#
-
-  public record Person(string Name, int Age);
-  var p1 = new Person("Afifa", 25);
-
-
-
-Benefits:
-      Immutable
-      Structural equality
-      Deconstruction
-
-
-
-
-✅ 12.       Tree (Custom)
-
-
-       C#
-
-  class TreeNode {
-       public int Value;
-       public List<TreeNode> Children = new();
-  }
-
-
-
-Useful for hierarchical data like file systems, org charts, etc.
-
-
-
-
-✅ 13.       Trie (Custom)
-Prefix tree used in string searching/autocomplete.
-
-
-       C#
-
-  class TrieNode {
-       public Dictionary<char, TrieNode> Children = new();
-       public bool IsWord = false;
-  }
-
-
-
-
-✅ 14.       Array
-      C#
-  int[] arr = {1, 2, 3};
-
-
-
-Useful members:
-
-
-      C#
-
-  arr.Length
-  Array.Sort(arr), Array.Reverse(arr)
-  Array.IndexOf(arr, 2)
-  Array.Copy(source, dest, length)
-
-
-
-
-✅ 15.      Span<T> / ReadOnlySpan<T>
-Efficient memory slicing (C# 7.2+).
-
-
-      C#
-
-  Span<int> span = stackalloc int[3];
-
-
-
-Use in performance-critical scenarios.
-
-
-
-
-✅ 16.      IEnumerable<T> / IQueryable<T>
-Used for LINQ queries and deferred execution.
-
-
-      C#
-
-  var filtered = numbers.Where(x => x > 2);
-
-
-
-
-✅ 17.      ObservableCollection<T>
-Collection with change notifications (used in WPF).
-
-
-      C#
-
-  ObservableCollection<string> names = new();
-  names.CollectionChanged += ...
-✅ 18.       SortedList<TKey, TValue> / SortedDictionary<TKey, TValue>
-Keeps keys in sorted order.
-
-
-       C#
-
-  SortedList<string, int> sorted = new();
-
-
-
-
-✅ 19.       ConcurrentDictionary , ConcurrentQueue , etc.
-Thread-safe collections.
-
-
-       C#
-
-  ConcurrentDictionary<string, int> cache = new();
-
-
-
-
-✅ 20.       ImmutableList<T> , ImmutableDictionary<TKey, TValue>
-Immutable versions for functional-style programming.
-
-
-
-
-✅ 21.       BitArray
-Efficient binary flags.
-
-
-       C#
-
-  BitArray flags = new(10); flags[0] = true;
-
-
-
-
-🔍 IntelliSense Tips
-For any structure:
-
-
-       C#
-
-  var s = new Stack<int>();
-  s.   // Press dot to see all members like Push, Pop, Count
-
-
-
-Use Ctrl+. in Visual Studio or type . to explore all properties, methods, extension
-methods.
-🔚 Summary Table
-Data Structure           Namespace                Purpose
-
-string                   System                   Text
-
-
-DateTime                 System                   Time
-
-
-List<T>                  System.Collections.Gen   Dynamic array
-                         eric
-
-
-Dictionary<K,V>          System.Collections.Gen   Key-value
-                         eric
-
-
-HashSet<T>               System.Collections.Gen   Unique set
-                         eric
-
-
-Stack<T>                 System.Collections.Gen   LIFO
-                         eric
-
-
-Queue<T>                 System.Collections.Gen   FIFO
-                         eric
-
-
-PriorityQueue<TElement   System.Collections.Gen   Min-Heap
-, TPriority>             eric
-
-
-LinkedList<T>            System.Collections.Gen   Bi-directional nodes
-                         eric
-
-
-Tuple , ValueTuple       System                   Group values
-
-
-Record                   System                   Immutable type
-
-
-Array , Span<T>          System                   Performance
-
-
-Trie , Tree              Custom                   Hierarchical/string search
-
-
-Concurrent*              System.Collections.Con   Thread-safe
-                         current
-
-
-Immutable*               System.Collections.Imm   Immutable variants
-                         utable
-Data Structure                Namespace                        Purpose
-
- BitArray                     System.Collections               Bits
-
-
- SortedList ,                 System.Collections.Gen           Sorted
- SortedDictionary             eric
-
-
-
-
-Would you like a downloadable PDF or code snippets in a GitHub Gist for this?
-
-You said:
-
-
-                             rewrite all with example, you listout but missed give
-                             example as well as you missed many thing like array.sort()
-                             or revers() with param, max heap (a,b) = > (a-b) like
-                             function... array.fill(with param) linked list, double linked list
-                             etc
-
-
-ChatGPT said:
-
-You're right—let’s now provide complete examples with code, IntelliSense-accessible
-members, and problem-solving tips for each C# data structure. I’ll also cover missing
-structures like Array.Sort(…) , Array.Fill(…) , SortedSet , Deque , MaxHeap ,
-etc.
-
-
-
-
-🔹 1.        string
-
-
-       C#
-
-  string name = "Afifa";
-  Console.WriteLine(name.ToUpper());         // AFIFA
-  Console.WriteLine(name.Contains("fi"));    // True
-  Console.WriteLine(name.Substring(1, 2));   // fi
-
-
-
-Useful members:
-
-
-       C#
-
-  Length, Contains, Substring, IndexOf, Replace, Split, StartsWith, EndsWith, ToUpper, ToLo
-🔹 2.   DateTime
-
-
-     C#
-
- DateTime now = DateTime.Now;
- DateTime birthday = new DateTime(1993, 12, 25);
- var tomorrow = now.AddDays(1);
- Console.WriteLine(birthday.DayOfWeek);   // Saturday
-
-
-
-Useful members:
-
-
-     C#
-
- Year, Month, Day, AddDays, AddMonths, Subtract, ToString("yyyy-MM-dd"), TryParse
-
-
-
-
-🔹 3.   Array
-
-
-     C#
-
- int[] arr = { 5, 2, 3, 1 };
-
-
- // Sort ascending
- Array.Sort(arr);
- Console.WriteLine(string.Join(", ", arr)); // 1, 2, 3, 5
-
-
- // Sort descending
- Array.Sort(arr, (a, b) => b - a);
-
-
- // Fill array
- Array.Fill(arr, 9); // All elements become 9
-
-
- // Reverse
- Array.Reverse(arr);
-
-
-
-
-🔹 4.   List<T>
-
-
-     C#
-
- List<int> numbers = new() { 1, 3, 5 };
- numbers.Add(7);
- numbers.Insert(1, 2);   // [1, 2, 3, 5, 7]
- numbers.Sort();        // Ascending
- numbers.Sort((a, b) => b - a);   // Descending
-
-
-
-Members:
-
-
-      C#
-
- Add, AddRange, Remove, RemoveAt, Contains, IndexOf, Insert, Sort, Reverse, Clear, Count,
-
-
-
-
-🔹 5.    Dictionary<TKey, TValue>
-
-
-      C#
-
- Dictionary<string, int> dict = new()
- {
-      ["apple"] = 3,
-      ["banana"] = 2
- };
- dict["banana"] = 5;
- if (dict.TryGetValue("banana", out var val)) Console.WriteLine(val);
-
-
-
-
-🔹 6.    HashSet<T> – Unordered, unique
-
-
-      C#
-
- HashSet<int> set = new() { 1, 2, 3 };
- set.Add(3);   // ignored
- set.UnionWith(new[] { 4, 5 }); // adds 4 and 5
-
-
-
-
-🔹 7.    SortedSet<T> – Sorted, unique
-
-
-      C#
-
- SortedSet<int> sorted = new() { 3, 1, 2 };
- foreach (var i in sorted) Console.WriteLine(i); // 1 2 3
-
-
-
-
-🔹 8.    Stack<T> – LIFO
-    C#
-
- Stack<int> stack = new();
- stack.Push(10);
- int last = stack.Pop();      // 10
-
-
-
-
-🔹 9.    Queue<T> – FIFO
-
-
-    C#
-
- Queue<string> queue = new();
- queue.Enqueue("first");
- string item = queue.Dequeue();   // "first"
-
-
-
-
-🔹 10.    PriorityQueue<TElement, TPriority> – Min-Heap
-
-
-    C#
-
- PriorityQueue<string, int> pq = new();
- pq.Enqueue("low", 1);
- pq.Enqueue("high", 0);
- Console.WriteLine(pq.Dequeue()); // "high"
-
-
-
-🔸 Max Heap:
-    C#
-
- PriorityQueue<string, int> maxHeap = new(Comparer<int>.Create((a, b) => b - a));
- maxHeap.Enqueue("high", 10);
- maxHeap.Enqueue("low", 1);
-
-
-
-
-🔹 11.    LinkedList<T> – Double-linked list
-
-
-    C#
-
- var list = new LinkedList<int>();
- list.AddFirst(1);
- list.AddLast(3);
- var two = list.AddAfter(list.First, 2);   // 1 -> 2 -> 3
-🔹 12.     Tuple<T1, T2> and ValueTuple
-
-
-     C#
-
- var tuple = Tuple.Create("Afifa", 11);
- var (name, age) = ("Afifa", 11); // ValueTuple
-
-
-
-
-🔹 13.     Record – Immutable value object (C# 9+)
-
-
-     C#
-
- public record Person(string Name, int Age);
-
-
- var p1 = new Person("Afifa", 30);
- var p2 = p1 with { Age = 31 };
-
-
-
-
-🔹 14.     Tree (Custom)
-
-
-     C#
-
- class TreeNode {
-     public int Val;
-     public List<TreeNode> Children = new();
- }
-
-
-
-
-🔹 15.     Trie (Prefix tree for strings)
-
-
-     C#
-
- class TrieNode {
-     public Dictionary<char, TrieNode> Children = new();
-     public bool IsEndOfWord;
- }
-
-
-
-
-🔹 16.     Span<T> – Efficient slicing (C# 7.2+)
-    C#
-
- Span<int> s = stackalloc int[3];
- s[0] = 1;
-
-
-
-
-🔹 17.    ObservableCollection<T> – CollectionChanged for WPF
-
-
-    C#
-
- var collection = new ObservableCollection<string>();
- collection.CollectionChanged += (s, e) => Console.WriteLine("Changed");
- collection.Add("Afifa");
-
-
-
-
-🔹 18.    SortedList<TKey, TValue> vs SortedDictionary<TKey,
-TValue>
-
-
-    C#
-
- SortedList<string, int> sortedList = new() { ["a"] = 1, ["b"] = 2 };
- SortedDictionary<string, int> sortedDict = new() { ["a"] = 1, ["b"] = 2 };
-
-
-
-
-🔹 19.    ConcurrentDictionary<TKey, TValue> – Thread-safe
-
-
-    C#
-
- ConcurrentDictionary<string, int> cd = new();
- cd.TryAdd("x", 1);
-
-
-
-
-🔹 20.    ImmutableList<T> – Functional programming
-
-
-    C#
-
- var list = ImmutableList.Create<int>(1, 2, 3);
- var newList = list.Add(4); // returns new list
-🔹 21.      BitArray – Efficient flags
-
-
-      C#
-
-  BitArray flags = new(8);
-  flags[0] = true;
-  Console.WriteLine(flags[0]); // True
-
-
-
-
-✅ Summary Table
-Data Structure                Usage                   Key Functions
-
-string                        Text                    Substring, Replace, IndexOf
-
-
-DateTime                      Dates/times             AddDays, Subtract, ToString
-
-
-Array                         Static list             Sort, Reverse, Fill
-
-
-List<T>                       Dynamic list            Add, Insert, Sort, Remove
-
-
-Dictionary<K,V>               Key-value pairs         TryGetValue, ContainsKey
-
-
-HashSet<T>                    Unique values           UnionWith, IntersectWith
-
-
-SortedSet<T>                  Sorted unique values    Min/Max operations
-
-
-Stack<T>                      LIFO                    Push, Pop, Peek
-
-
-Queue<T>                      FIFO                    Enqueue, Dequeue
-
-
-PriorityQueue<T>              Min/Max heap            Enqueue, Dequeue (with
-                                                      comparer)
-
-
-LinkedList<T>                 Bidirectional list      AddBefore, AddAfter
-
-
-Tuple , ValueTuple            Grouping values         Item1, Item2 or named
-                                                      deconstruction
-
-
-Record                        Immutable class         with, equality, ToString
-
-
-Tree , Trie                   Hierarchical / Prefix   Custom classes
-                              structures
-Data Structure                  Usage                          Key Functions
-
- Span<T>                        Memory slice (perf)            Efficient iteration
-
-
- ObservableCollection<T         WPF UI updates                 CollectionChanged
- >
-
-
- SortedList ,                   Auto-sorted                    Keys, Values
- SortedDict
-
-
- Concurrent*                    Thread-safe collections        TryAdd, TryRemove
-
-
- Immutable*                     Functional style               Add, Remove (new copy)
-
-
- BitArray                       Memory-efficient flags         Set, Get
-
-
-
-
-Would you like this as a PDF, cheat sheet, or interactive notebook? I can also help you
-prepare questions or practice problems based on these structures.
-
-You said:
-
-
-                                small = new PriorityQueue<int, int>
-                                (Comparer<int>.Create((a, b) => b.CompareTo(a)));
-                                is there any alternative
-
-
-ChatGPT said:
-
-Yes, the line:
-
-
-        C#
-
-     small = new PriorityQueue<int, int>(Comparer<int>.Create((a, b) => b.CompareTo(a)));
-
-
-
-creates a max-heap using PriorityQueue<TElement, TPriority> by reversing the
-default comparer. This is correct and idiomatic, but there are a few alternatives and
-variations.
-
-
-
-
-✅ Alternative 1: Use            Comparer<int>.Default.Reverse()
-This is more expressive and readable:
-        C#
-
-  small = new PriorityQueue<int, int>(Comparer<int>.Default.Reverse());
-
-
-
-
-    Reverse() is available on Comparer<T> in .NET 6+.
-
-
-
-
-✅ Alternative 2: Explicit              new Comparer<int> with lambda
-If you can't use .Reverse() (e.g., older C# version):
-
-
-        C#
-
-  small = new PriorityQueue<int, int>(
-        Comparer<int>.Create((x, y) => y - x) // or y.CompareTo(x)
-  );
-
-
-
-
-✅ Alternative 3: Use negative priorities
-Another trick, especially in competitive coding:
-
-
-        C#
-
-  PriorityQueue<int, int> pq = new();
-  pq.Enqueue(10, -10); // store priority as -priority
-
-
-  var max = pq.Dequeue(); // element with highest original value
-
-
-
-But be careful—this assumes:
-       You control how priorities are added.
-       All priorities are numeric and convertible to negative.
-
-
-
-
-🔁 Summary
-Approach                          Code Example                   Notes
-
-Default + Reverse()                Comparer<int>.Default.R       ✅ Clean, readable
-                                   everse()
-Approach                       Code Example                   Notes
-
-Custom lambda                   Comparer<int>.Create((a       ✅ Common trick
-                                , b) => b - a)
-
-
-Use negative priorities         Enqueue(value, -              ⚠️ Manual, less safe
-                                priority)
-
-
-
-
-Let me know if you'd like to wrap this into a reusable helper or extension method for
-MaxHeap!
-
-
-                                       Today 1:54 PM
-
-
-You said:
-
-
-                                                        make mark down, avoid duplicate
-
-
-ChatGPT said:
-
-This response couldn’t load
-
-You said:
-
-
-                                  make markdown file , avoid duplicate information If any
-
-
-Analyzing
-
----
+**ChatGPT said:** Use the editor's completion list to discover members available on a value. For example, type a variable name followed by a dot in the IDE. The exact shortcut for additional code actions varies by editor and context.
 
 ## Additional Questpond question sets
 
