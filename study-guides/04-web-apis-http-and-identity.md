@@ -1122,6 +1122,33 @@ Notes:
 
 #### 3. JWT authentication and logout
 
+##### How does JWT authentication work, step by step?
+
+```text
+Step 1 — User logs in
+         Browser submits username and password over HTTPS
+            ↓
+Step 2 — API validates credentials
+         Checks the user record and verifies the password hash
+            ↓
+Step 3 — API creates and signs the JWT
+         Adds claims and an expiration time, then signs the token
+            ↓
+Step 4 — Browser receives the JWT
+         For example, in an HttpOnly, Secure cookie
+            ↓
+Step 5 — Browser requests a protected API
+         Browser sends the cookie automatically
+            ↓
+Step 6 — API validates the JWT
+         Checks signature, issuer, audience, expiration, and required claims
+            ↓
+Step 7 — Authorization
+         Checks whether the authenticated user is allowed to perform the operation
+```
+
+Notice that at **Step 6** the API does not normally need to query the database to verify the password again. The valid signature proves the token was issued by the trusted server and hasn't been modified. That's what makes JWTs fast and stateless, and it's also why logout is tricky, as the next part explains.
+
 ##### Why logout is different with JWT
 
 A signed JWT is normally validated using its signature and claims, including its expiry. In a purely stateless setup, the API does not keep a record of each access token. Consequently, deleting the token from the browser does **not** invalidate a copied token: that token can still work until it expires unless the API has a revocation mechanism.
