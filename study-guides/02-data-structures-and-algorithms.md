@@ -1,21 +1,19 @@
 # Data Structures and Algorithms
 
-This guide combines the distinct source materials below. Original explanations, examples, and interview questions are retained; exact duplicate source files are excluded and documented in the library index.
+Each concept is explained once. Where several notes covered the same topic, they have been merged into a single section, and related topics in other guides are linked instead of repeated.
 
-## Included source materials
+## Contents
 
-- [csharp-data-structures-sorting-interview-cheatsheet.md](#csharp-data-structures-sorting-interview-cheatsheet-md)
-- [algorithmic_techniques_guide.md](#algorithmic-techniques-guide-md)
-- [C# Data Structures Guide.pdf](#c-data-structures-guide-pdf)
+- [C# Data Structures, Heaps, Comparers, and Sorting — Interview Cheat Sheet](#csharp-data-structures-sorting-interview-cheatsheet-md)
+- [Core Algorithmic Techniques: A Practical Guide](#algorithmic-techniques-guide-md)
+- [Other Handy Types](#c-data-structures-guide-pdf)
+- [Additional Questpond question sets](#additional-questpond-question-sets)
+
 ---
 
 <a id="csharp-data-structures-sorting-interview-cheatsheet-md"></a>
 
-## Source: C# Data Structures, Heaps, Comparers, and Sorting — Interview Cheat Sheet
-
-*Imported from `csharp-data-structures-sorting-interview-cheatsheet.md`.*
-
-### C# Data Structures, Heaps, Comparers, and Sorting — Interview Cheat Sheet
+## C# Data Structures, Heaps, Comparers, and Sorting — Interview Cheat Sheet
 
 Target: modern C# / .NET (including `PriorityQueue<TElement, TPriority>` in .NET 6+).
 
@@ -263,96 +261,14 @@ Complexity: `O(n log k)` time and `O(k)` extra space, excluding the final sort o
 
 Costs are typical, not hard real-time guarantees. Hash-based operations can degrade in pathological cases.
 
-#### 6. Everyday collection operations
+#### 6. Everyday collection operations and LINQ
 
-##### Arrays and lists
+Member-by-member examples for `List<T>`, `Dictionary`, `HashSet`, `Queue`, `Stack`, and the common LINQ operators are in [C# Language and Code Quality → Standard collections](01-csharp-language-and-quality.md#csharp-data-types-and-collections-cheatsheet-md). Two interview-specific reminders:
 
-```csharp
-int[] a = { 1, 2, 3 };
-int first = a[0];
-int length = a.Length;
+- Set methods such as `UnionWith`, `IntersectWith`, and `ExceptWith` **mutate** the receiver; LINQ `Union`/`Intersect`/`Except` return a new sequence.
+- Frequency count in one line: `numbers.GroupBy(n => n).ToDictionary(g => g.Key, g => g.Count())`. In hot paths, a plain loop can be clearer and avoids LINQ allocations.
 
-var list = new List<int> { 1, 2, 3 };
-list.Add(4);
-list.AddRange(new[] { 5, 6 });
-list.Insert(0, 99);
-bool hasThree = list.Contains(3);
-int index = list.IndexOf(3);
-list.Remove(99);       // removes first matching value
-list.RemoveAt(0);      // removes by index
-list.Sort();
-list.Clear();
-```
-
-##### Dictionary
-
-```csharp
-var scores = new Dictionary<string, int>();
-scores["Ada"] = 95; // add or replace
-scores.Add("Lin", 88); // throws if key already exists
-
-if (scores.TryGetValue("Ada", out int score))
-    Console.WriteLine(score);
-
-bool exists = scores.ContainsKey("Lin");
-scores.Remove("Lin");
-
-foreach (KeyValuePair<string, int> pair in scores)
-    Console.WriteLine($"{pair.Key}: {pair.Value}");
-```
-
-Prefer `TryGetValue` when a missing key is normal. Use `Add` when duplicate keys should be treated as an error.
-
-##### HashSet operations
-
-```csharp
-var left = new HashSet<int> { 1, 2, 3 };
-var right = new HashSet<int> { 3, 4, 5 };
-
-left.UnionWith(right);        // {1,2,3,4,5}
-left.IntersectWith(right);    // retain common values
-left.ExceptWith(right);       // remove values present in right
-bool isPresent = left.Contains(3);
-```
-
-Set operation methods mutate the receiver. Use `left.Union(right)` / `Intersect` / `Except` with LINQ when a new sequence is preferred.
-
-##### Queue and stack
-
-```csharp
-var queue = new Queue<string>();
-queue.Enqueue("A");
-queue.Enqueue("B");
-if (queue.TryDequeue(out string? next)) { /* use next */ }
-
-var stack = new Stack<string>();
-stack.Push("A");
-stack.Push("B");
-if (stack.TryPop(out string? top)) { /* use top */ }
-```
-
-#### 7. LINQ utilities commonly used in interviews
-
-```csharp
-int[] numbers = { 4, 1, 4, 2, 9, 2 };
-
-var distinct = numbers.Distinct().ToArray();
-var evens = numbers.Where(n => n % 2 == 0).ToArray();
-var squares = numbers.Select(n => n * n).ToArray();
-int count = numbers.Count(n => n > 3);
-bool anyNegative = numbers.Any(n => n < 0);
-bool allPositive = numbers.All(n => n > 0);
-int sum = numbers.Sum();
-int max = numbers.Max();
-int min = numbers.Min();
-var frequency = numbers
-    .GroupBy(n => n)
-    .ToDictionary(g => g.Key, g => g.Count());
-```
-
-For performance-sensitive hot paths, be aware that LINQ may allocate or enumerate multiple times. A simple loop can be clearer and faster when profiling shows it matters.
-
-#### 8. Binary search on sorted data
+#### 7. Binary search on sorted data
 
 ```csharp
 int[] sorted = { 1, 3, 5, 7, 9 };
@@ -362,7 +278,7 @@ int missing = Array.BinarySearch(sorted, 6); // negative encoded insertion point
 
 The input must already be sorted with the same ordering used for the search. For insertion point when not found: `int insertionIndex = ~missing;`.
 
-#### 9. Interview patterns to recognize
+#### 8. Interview patterns to recognize
 
 - **Fast membership / deduplication:** `HashSet<T>`.
 - **Count frequencies / pair lookup:** `Dictionary<TKey,TValue>`.
@@ -374,7 +290,7 @@ The input must already be sorted with the same ordering used for the search. For
 - **Sliding window:** array/list plus two pointers; sometimes a dictionary or deque-like structure.
 - **Custom ordering:** comparison lambda, `Comparer<T>.Create`, or `IComparer<T>`.
 
-#### 10. Pitfalls worth remembering
+#### 9. Pitfalls worth remembering
 
 1. Avoid `(a, b) => a - b` and `(a, b) => b - a` for general integer comparison because subtraction can overflow. Use `CompareTo`.
 2. `Array.Reverse` and `List<T>.Reverse` reverse the current order; they do not sort.
@@ -387,7 +303,7 @@ The input must already be sorted with the same ordering used for the search. For
 9. For a max-priority queue, a reversed comparer is safer than negating a priority that could be `int.MinValue`.
 10. In production code, choose clarity first and optimize after measuring; Big-O does not capture allocations, cache behavior, or constant factors.
 
-#### 11. Quick templates
+#### 10. Quick templates
 
 ```csharp
 // Ascending / descending
@@ -419,11 +335,7 @@ max.TryDequeue(out int largest, out _); // 10
 
 <a id="algorithmic-techniques-guide-md"></a>
 
-## Source: Core Algorithmic Techniques: A Practical Guide
-
-*Imported from `algorithmic_techniques_guide.md`.*
-
-### Core Algorithmic Techniques: A Practical Guide
+## Core Algorithmic Techniques: A Practical Guide
 
 This guide explains **recursion, divide and conquer, backtracking, greedy algorithms, and dynamic programming** with self-contained text diagrams, examples, C# code, and a comparison table.
 
@@ -742,19 +654,13 @@ The most important skill is not memorizing labels. It is recognizing the structu
 
 <a id="c-data-structures-guide-pdf"></a>
 
-## Source: C# Data Structures Guide
+## Other Handy Types
 
-*Organized from the conversation imported from `C# Data Structures Guide.pdf`.*
+`List<T>`, `Dictionary`, sets, `Stack`, `Queue`, `LinkedList`, concurrent/immutable collections, `Span<T>`, and `ObservableCollection<T>` are covered once in [C# Language and Code Quality → Data Types and Collections](01-csharp-language-and-quality.md#csharp-data-types-and-collections-cheatsheet-md). Sorting and heaps are covered above. This section only adds what isn't covered elsewhere.
 
-- **User:** Requested a problem-solving reference with examples and useful members, then asked for array operations, heap comparers, and linked-list details, followed by an alternative max-heap comparer.
-- **ChatGPT:** Supplied the examples and descriptions below. Repeated material has been consolidated.
-- **Correction:** `Comparer<int>.Default.Reverse()` is not a standard .NET API. Use a reversed comparer such as `Comparer<int>.Create((a, b) => b.CompareTo(a))`; avoid subtraction comparers because integer overflow can cause incorrect ordering.
+> **Watch out:** `Comparer<int>.Default.Reverse()` is **not** a .NET API. For a max-heap, use `Comparer<int>.Create((a, b) => b.CompareTo(a))`. Negating priorities only works when the value can't be `int.MinValue`.
 
-## Core types
-
-### `string`
-
-**ChatGPT's description:** Immutable sequence of characters.
+### `string` — immutable sequence of characters
 
 ```csharp
 string name = "Afifa";
@@ -772,216 +678,11 @@ bool isEmpty = string.IsNullOrEmpty(name);
 bool isBlank = string.IsNullOrWhiteSpace(name);
 ```
 
-Common members include `Length`, `Contains`, `StartsWith`, `EndsWith`, `IndexOf`, `LastIndexOf`, `Substring`, `Replace`, `Split`, `ToUpper`, `ToLower`, and `string.Join`.
-
-### `DateTime`
-
-**ChatGPT's description:** Used for date and time manipulation.
-
-```csharp
-DateTime now = DateTime.Now;
-DateTime birthday = new DateTime(1993, 12, 25);
-DateTime tomorrow = now.AddDays(1);
-DayOfWeek weekday = birthday.DayOfWeek;
-string formatted = birthday.ToString("yyyy-MM-dd");
-
-if (DateTime.TryParse("2024-05-01", out DateTime parsed))
-{
-    Console.WriteLine(parsed);
-}
-```
-
-Common members include `Year`, `Month`, `Day`, `DayOfWeek`, `AddDays`, `AddMonths`, `Subtract`, `ToString`, and `DateTime.TryParse`.
-
-### Arrays
-
-**ChatGPT's description:** Fixed-size, indexed collection.
-
-```csharp
-int[] values = { 5, 2, 3, 1 };
-
-Array.Sort(values);
-Console.WriteLine(string.Join(", ", values)); // 1, 2, 3, 5
-
-Array.Sort(values, (a, b) => b.CompareTo(a)); // Descending
-Array.Reverse(values);
-Array.Fill(values, 9);
-
-int index = Array.IndexOf(values, 9);
-int[] copy = new int[values.Length];
-Array.Copy(values, copy, values.Length);
-int length = values.Length;
-```
-
-`Array.Sort` also supports a range (`index`, `length`) and an `IComparer<T>` for custom ordering. Use `Array.Fill(array, value, startIndex, count)` to fill only part of an array.
-
-### `List<T>`
-
-**ChatGPT's description:** Resizable array.
-
-```csharp
-List<int> numbers = new() { 1, 3, 5 };
-numbers.Add(7);
-numbers.AddRange(new[] { 9, 11 });
-numbers.Insert(1, 2);
-numbers.Sort();
-numbers.Sort((a, b) => b.CompareTo(a)); // Descending
-numbers.Reverse();
-
-bool contains = numbers.Contains(5);
-int index = numbers.IndexOf(5);
-numbers.Remove(5);
-numbers.RemoveAt(0);
-int count = numbers.Count;
-numbers.Clear();
-```
-
-Common members include `Add`, `AddRange`, `Insert`, `Remove`, `RemoveAt`, `Contains`, `IndexOf`, `Sort`, `Reverse`, `ForEach`, `Count`, and `Clear`.
-
-### `Dictionary<TKey, TValue>`
-
-**ChatGPT's description:** Key-value collection.
-
-```csharp
-Dictionary<string, int> counts = new()
-{
-    ["apple"] = 3,
-    ["banana"] = 2
-};
-
-counts["banana"] = 5;
-counts.TryGetValue("banana", out int bananaCount);
-bool hasApple = counts.ContainsKey("apple");
-IEnumerable<string> keys = counts.Keys;
-IEnumerable<int> values = counts.Values;
-counts.Remove("apple");
-```
-
-Common members include `Add`, `Remove`, `ContainsKey`, `ContainsValue`, `TryGetValue`, `Keys`, `Values`, `Count`, and `Clear`. Prefer `TryGetValue` when a key may be absent.
-
-### `HashSet<T>` and `SortedSet<T>`
-
-**ChatGPT's description:** A hash set stores unique elements without ordering; a sorted set stores unique elements in sorted order.
-
-```csharp
-HashSet<int> unique = new() { 1, 2, 3 };
-unique.Add(3); // No duplicate is added.
-unique.UnionWith(new[] { 4, 5 });
-unique.IntersectWith(new[] { 2, 4, 6 });
-bool hasThree = unique.Contains(3);
-
-SortedSet<int> ordered = new() { 3, 1, 2 };
-int minimum = ordered.Min;
-int maximum = ordered.Max;
-```
-
-Common set members include `Add`, `Remove`, `Contains`, `UnionWith`, `IntersectWith`, `ExceptWith`, and `SymmetricExceptWith`.
-
-### `Stack<T>`
-
-**ChatGPT's description:** LIFO (last in, first out).
-
-```csharp
-Stack<int> stack = new();
-stack.Push(10);
-stack.Push(20);
-
-int top = stack.Peek(); // 20; does not remove it
-int removed = stack.Pop(); // 20
-bool contains = stack.Contains(10);
-```
-
-Common members include `Push`, `Pop`, `Peek`, `Contains`, `Count`, and `Clear`. Use `TryPop` or `TryPeek` when the stack may be empty.
-
-### `Queue<T>`
-
-**ChatGPT's description:** FIFO (first in, first out).
-
-```csharp
-Queue<string> queue = new();
-queue.Enqueue("first");
-queue.Enqueue("second");
-
-string next = queue.Peek(); // "first"; does not remove it
-string removed = queue.Dequeue(); // "first"
-```
-
-Common members include `Enqueue`, `Dequeue`, `Peek`, `Contains`, `Count`, and `Clear`. Use `TryDequeue` or `TryPeek` when the queue may be empty.
-
-### `PriorityQueue<TElement, TPriority>`
-
-**ChatGPT's description:** A min-priority queue by default; the element with the smallest priority is dequeued first.
-
-```csharp
-PriorityQueue<string, int> minHeap = new();
-minHeap.Enqueue("lower priority", 5);
-minHeap.Enqueue("higher priority", 1);
-string next = minHeap.Dequeue(); // "higher priority"
-```
-
-To make a max-priority queue, reverse the priority comparer:
-
-```csharp
-PriorityQueue<int, int> maxHeap = new(
-    Comparer<int>.Create((a, b) => b.CompareTo(a)));
-
-maxHeap.Enqueue(10, 10);
-maxHeap.Enqueue(3, 3);
-int maximum = maxHeap.Dequeue(); // 10
-```
-
-Another option for non-negative numeric priorities is to enqueue the negated priority and keep the default comparer. Common members include `Enqueue`, `Dequeue`, `Peek`, `TryDequeue`, `TryPeek`, `Count`, and `Clear`.
-
-### `LinkedList<T>`
-
-**ChatGPT's description:** Doubly linked list; each node links to both its previous and next nodes.
-
-```csharp
-LinkedList<int> items = new();
-items.AddFirst(1);
-LinkedListNode<int> three = items.AddLast(3);
-items.AddAfter(three, 4);
-items.AddBefore(three, 2);
-
-LinkedListNode<int>? node = items.Find(3);
-items.RemoveFirst();
-items.RemoveLast();
-```
-
-Common members include `AddFirst`, `AddLast`, `AddBefore`, `AddAfter`, `Find`, `Remove`, `RemoveFirst`, `RemoveLast`, `First`, `Last`, and `Count`. The .NET type is doubly linked; it does not provide a separate built-in `DoublyLinkedList<T>` type.
-
-### `Tuple`, `ValueTuple`, and records
-
-**ChatGPT's description:** Tuples group values; records provide value-oriented equality and concise data models.
-
-```csharp
-Tuple<string, int> referenceTuple = Tuple.Create("Afifa", 11);
-string tupleName = referenceTuple.Item1;
-
-(string Name, int Age) valueTuple = ("Afifa", 11);
-var (name, age) = valueTuple;
-```
-
-```csharp
-public class Program
-{
-    public static void Main()
-    {
-        Person first = new("Afifa", 30);
-        Person older = first with { Age = 31 };
-    }
-}
-
-public record Person(string Name, int Age);
-```
-
-Use named `ValueTuple` elements for lightweight local groupings. Use records when a named type with value-based equality is useful. Records are not always immutable: `record` properties can be mutable; positional record properties are init-only by default.
-
-## Other useful types
+Every "modifying" method returns a **new** string. In loops, use `StringBuilder` to avoid creating lots of temporary strings.
 
 ### Custom trees and tries
 
-**ChatGPT's description:** Trees model hierarchical data; tries are prefix trees often used for string lookup and autocomplete. These are custom structures, not one general-purpose tree or trie type in the base collections library.
+The base library has no general-purpose tree or trie type, so you build them yourself. Trees model hierarchies; a trie (prefix tree) is great for prefix lookups and autocomplete.
 
 ```csharp
 class TreeNode
@@ -997,102 +698,11 @@ class TrieNode
 }
 ```
 
-### `Span<T>` and `ReadOnlySpan<T>`
-
-**ChatGPT's description:** Stack-only views over contiguous memory, useful for allocation-conscious processing.
-
-```csharp
-Span<int> values = stackalloc int[3];
-values[0] = 1;
-values[1] = 2;
-values[2] = 3;
-
-ReadOnlySpan<int> readOnlyValues = values;
-```
-
-### `IEnumerable<T>` and `IQueryable<T>`
-
-**ChatGPT's description:** Interfaces commonly used for sequence processing and LINQ. `IEnumerable<T>` represents in-memory or streaming iteration; `IQueryable<T>` allows a provider to interpret an expression tree, often to translate it to a remote query.
-
-```csharp
-int[] numbers = { 1, 2, 3, 4 };
-IEnumerable<int> filtered = numbers.Where(value => value > 2);
-```
-
-### `ObservableCollection<T>`
-
-**ChatGPT's description:** Collection that raises change notifications, commonly used in UI frameworks such as WPF.
-
-```csharp
-ObservableCollection<string> names = new();
-names.CollectionChanged += (_, _) => Console.WriteLine("Changed");
-names.Add("Afifa");
-```
-
-### Sorted key-value collections
-
-**ChatGPT's description:** Both keep keys ordered; `SortedList<TKey, TValue>` and `SortedDictionary<TKey, TValue>` have different performance characteristics and are not interchangeable in every workload.
-
-```csharp
-SortedList<string, int> sortedList = new()
-{
-    ["a"] = 1,
-    ["b"] = 2
-};
-
-SortedDictionary<string, int> sortedDictionary = new()
-{
-    ["a"] = 1,
-    ["b"] = 2
-};
-```
-
-### Concurrent and immutable collections
-
-**ChatGPT's description:** Concurrent collections provide thread-safe operations; immutable collections return new collection instances when changed. These types are in the `System.Collections.Concurrent` and `System.Collections.Immutable` namespaces.
-
-```csharp
-ConcurrentDictionary<string, int> cache = new();
-cache.TryAdd("x", 1);
-cache.AddOrUpdate("x", 1, (_, current) => current + 1);
-
-ImmutableList<int> original = ImmutableList.Create(1, 2, 3);
-ImmutableList<int> updated = original.Add(4); // original is unchanged
-```
-
-Other concurrent types include `ConcurrentQueue<T>`, `ConcurrentStack<T>`, and `ConcurrentBag<T>`. Immutable counterparts include `ImmutableArray<T>`, `ImmutableDictionary<TKey, TValue>`, and `ImmutableHashSet<T>`.
-
-### `BitArray`
-
-**ChatGPT's description:** Compact collection of Boolean values, useful for flags.
-
-```csharp
-BitArray flags = new(8);
-flags[0] = true;
-bool firstFlag = flags[0];
-```
-
-## User follow-up: alternative max-heap comparer
-
-**User said:** They asked whether there was an alternative to constructing a reversed comparer inline for `PriorityQueue<int, int>`.
-
-**ChatGPT said:** The response suggested a reversed comparer and negating priorities. The supported comparer-based approach is shown in the `PriorityQueue<TElement, TPriority>` section above. Negated priorities are only suitable when the priority type and value range make negation safe.
-
-## IntelliSense and member discovery
-
-**ChatGPT said:** Use the editor's completion list to discover members available on a value. For example, type a variable name followed by a dot in the IDE. The exact shortcut for additional code actions varies by editor and context.
+**Tip:** in any IDE, type a variable name followed by `.` to see all available members in IntelliSense. It's the fastest way to discover APIs.
 
 ## Additional Questpond question sets
 
-### Questpond source: 10-scenario-based.md
-
----
-
-
-
----
-
-#### Scenario-based questions
+### Scenario-based questions
 
 Answers below use the supplied examples. Source page numbers refer to the PDF's 1-based pages.
 
@@ -1337,15 +947,7 @@ Describe a real implementation if applicable. In general, queues decouple produc
 
 ---
 
-### Questpond source: 12-coding-questions.md
-
----
-
-
-
----
-
-#### Coding questions
+### Coding questions
 
 The PDF's coding section asks for efficient solutions and often says not to rely on built-in convenience functions. Examples use C#; assume valid non-null inputs unless stated. Source page numbers are included with each prompt.
 
@@ -1456,7 +1058,7 @@ This compares exact characters. To ignore case/punctuation, normalize first; tha
 
 ##### 6. Check anagrams *(PDF p.22)*
 
-Use the character-frequency method from [the scenario answer](10-scenario-based.md#check-whether-two-strings-are-anagrams-pdf-p20). It is `O(n)` time and handles the source's `India`/`diani` example without regard to case.
+Use the character-frequency method from [the scenario answer](#check-whether-two-strings-are-anagrams-pdf-p20). It is `O(n)` time and handles the source's `India`/`diani` example without regard to case.
 
 ##### 7. Maximum sum of a contiguous subarray of size `k` *(PDF p.22)*
 
@@ -1703,11 +1305,11 @@ static string RemoveDuplicateChars(string s)
 
 ##### 17. Basic star patterns *(PDF p.22)*
 
-For a centered pyramid of `rows` lines, print `rows - r` spaces and `2*r - 1` stars for each row `r` from 1 to `rows`. The two specific patterns shown in the PDF are reproduced in [the pattern answers](10-scenario-based.md#pattern-printing-prompts).
+For a centered pyramid of `rows` lines, print `rows - r` spaces and `2*r - 1` stars for each row `r` from 1 to `rows`. The two specific patterns shown in the PDF are reproduced in [the pattern answers](#pattern-printing-prompts).
 
 ##### 18. Find the Nth highest salary *(PDF p.22)*
 
-See the `DENSE_RANK` SQL solution in [SQL scenarios](11-sql-scenarios.md#find-the-nth-highest-salary-pdf-p22); it returns the Nth distinct salary.
+See the `DENSE_RANK` SQL solution in [SQL scenarios](05-efcore-linq-and-sql.md#find-the-nth-highest-salary-pdf-p22); it returns the Nth distinct salary.
 
 ##### 19. Swap two numbers *(PDF p.22)*
 
@@ -1804,7 +1406,7 @@ static int MaxValue(int[] a)
 
 ##### 25. Find duplicate records in a table *(PDF p.23)*
 
-Group by the columns that define a duplicate and use `HAVING COUNT(*) > 1`; see the parameterized example in [SQL scenarios](11-sql-scenarios.md#find-duplicate-records-in-a-table-pdf-p23).
+Group by the columns that define a duplicate and use `HAVING COUNT(*) > 1`; see the parameterized example in [SQL scenarios](05-efcore-linq-and-sql.md#find-duplicate-records-in-a-table-pdf-p23).
 
 ##### 26. Count contiguous subarrays whose product is less than `K` *(PDF p.23)*
 

@@ -213,15 +213,7 @@ For scenario questions, explain the request/data flow, identity, network path, d
 
 ## Additional Questpond question sets
 
-### Questpond source: 07-azure.md
-
----
-
-
-
----
-
-#### Azure
+### Azure
 
 ###### 1. What is Azure App Service, and how do you deploy a .NET application to it? (PDF p. 11)
 **Answer:** Azure App Service is a managed platform for hosting web apps and APIs without managing the underlying VM. Build and publish the application, configure the runtime/settings and deployment identity, then deploy through a supported pipeline, ZIP/package, or container workflow; verify health and logs after release.
@@ -303,15 +295,7 @@ For scenario questions, explain the request/data flow, identity, network path, d
 
 ---
 
-### Questpond source: 13-azure-interview-questions.md
-
----
-
-
-
----
-
-#### Azure interview questions
+### Azure interview questions
 
 ##### Azure Bus *(PDF p.21)*
 

@@ -1,21 +1,19 @@
 # Architecture and Design Patterns
 
-This guide combines the distinct source materials below. Original explanations, examples, and interview questions are retained; exact duplicate source files are excluded and documented in the library index.
+Each concept is explained once. Where several notes covered the same topic, they have been merged into a single section, and related topics in other guides are linked instead of repeated.
 
-## Included source materials
+## Contents
 
-- [23-design-patterns-csharp-senior-viva.md](#23-design-patterns-csharp-senior-viva-md)
-- [clean-architecture-cqrs-vs-mvc-dotnet8.md](#clean-architecture-cqrs-vs-mvc-dotnet8-md)
-- [senior_dotnet_architect_viva_prep.md](#senior-dotnet-architect-viva-prep-md)
+- [23 GoF Design Patterns in C# — Senior .NET Developer / Architect Viva Guide](#23-design-patterns-csharp-senior-viva-md)
+- [Why Choose Clean Architecture with CQRS over MVC in .NET 8?](#clean-architecture-cqrs-vs-mvc-dotnet8-md)
+- [Senior .NET Developer & Solution Architect — Viva Preparation](#senior-dotnet-architect-viva-prep-md)
+- [Additional Questpond question sets](#additional-questpond-question-sets)
+
 ---
 
 <a id="23-design-patterns-csharp-senior-viva-md"></a>
 
-## Source: 23 GoF Design Patterns in C# — Senior .NET Developer / Architect Viva Guide
-
-*Imported from `23-design-patterns-csharp-senior-viva.md`.*
-
-### 23 GoF Design Patterns in C# — Senior .NET Developer / Architect Viva Guide
+## 23 GoF Design Patterns in C# — Senior .NET Developer / Architect Viva Guide
 
 A practical viva-preparation guide to the **23 Gang of Four (GoF) design patterns**, grouped into **Creational**, **Structural**, and **Behavioral** patterns. Each pattern includes its intent, a .NET application scenario, a C# example, and a senior-level consideration.
 
@@ -896,11 +894,7 @@ The goal of a senior-level answer is not just to recite each pattern's definitio
 
 <a id="clean-architecture-cqrs-vs-mvc-dotnet8-md"></a>
 
-## Source: Why Choose Clean Architecture with CQRS over MVC in .NET 8?
-
-*Imported from `clean-architecture-cqrs-vs-mvc-dotnet8.md`.*
-
-### Why Choose Clean Architecture with CQRS over MVC in .NET 8?
+## Why Choose Clean Architecture with CQRS over MVC in .NET 8?
 
 #### Introduction
 
@@ -999,11 +993,7 @@ For .NET 8, the decision is not simply **MVC versus Clean Architecture with CQRS
 
 <a id="senior-dotnet-architect-viva-prep-md"></a>
 
-## Source: Senior .NET Developer & Solution Architect — Viva Preparation
-
-*Imported from `senior_dotnet_architect_viva_prep.md`.*
-
-### Senior .NET Developer & Solution Architect — Viva Preparation
+## Senior .NET Developer & Solution Architect — Viva Preparation
 
 This guide consolidates the topics discussed so far into one reference. Repeated explanations have been merged, and examples focus on the concepts most useful in a senior developer or solution architect viva.
 
@@ -1228,22 +1218,7 @@ For multiple API replicas, an in-memory cache is not shared. Use a distributed c
 
 #### 1.7 `Span<T>` and `Memory<T>`
 
-Both provide views over contiguous memory without necessarily copying the underlying data.
-
-- `Span<T>` is a stack-only `ref struct`; it is ideal for synchronous parsing and buffer manipulation.
-- `Memory<T>` can be stored in ordinary objects and used across `await` boundaries.
-- Neither automatically makes every operation allocation-free.
-
-```csharp
-ReadOnlySpan<char> input = "12345".AsSpan();
-
-if (int.TryParse(input, out int value))
-{
-    Console.WriteLine(value);
-}
-```
-
-Use these types when they simplify buffer processing and profiling demonstrates a benefit.
+`Span<T>` is a stack-only view for synchronous buffer work; `Memory<T>` can be stored in fields and used across `await`. Details and examples: [C# Language → Memory and views](01-csharp-language-and-quality.md#csharp-data-types-and-collections-cheatsheet-md) and [Concurrency → `Span<T>` and `Slice()`](07-concurrency-threading-and-async.md).
 
 #### 1.8 How do you handle long-running requests?
 
@@ -1316,134 +1291,7 @@ For production, consider partitioned policies, gateway-level protection, `Retry-
 
 ### 2. Async/await, threads, and operating-system I/O
 
-#### 2.1 Does `async` / `await` use ThreadPool threads?
-
-**Viva answer:** `async` and `await` are language features for composing asynchronous operations. They do not inherently create a new thread.
-
-- **I/O-bound operation:** the OS/runtime can wait for I/O without occupying a worker thread for the entire wait.
-- **CPU-bound operation:** the work must execute on a CPU. `Task.Run` can schedule it on a ThreadPool thread, but should not be used automatically inside every ASP.NET Core request.
-- **Continuation:** after an awaited operation completes, the remaining code runs according to the captured context/scheduler rules. In ASP.NET Core, continuations normally run on ThreadPool threads because there is no classic ASP.NET synchronization context.
-
-##### I/O-bound example
-
-```csharp
-public async Task<string> GetPageAsync(
-    HttpClient httpClient,
-    CancellationToken cancellationToken)
-{
-    return await httpClient.GetStringAsync(
-        "https://example.com",
-        cancellationToken);
-}
-```
-
-While the network response is pending, this does not require a ThreadPool thread to sit blocked waiting for the response. When completion is reported, .NET schedules the continuation as appropriate.
-
-##### CPU-bound example
-
-```csharp
-public Task<long> CalculateAsync(
-    int count,
-    CancellationToken cancellationToken)
-{
-    return Task.Run(() =>
-    {
-        long total = 0;
-
-        for (int i = 0; i < count; i++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            total += i;
-        }
-
-        return total;
-    }, cancellationToken);
-}
-```
-
-This consumes CPU on a ThreadPool worker. In ASP.NET Core, use this only when there is a real reason to move CPU work elsewhere; it does not increase total CPU capacity and can make thread-pool pressure worse.
-
-**Avoid** `.Result`, `.Wait()`, and sync-over-async in request paths. They block threads and can cause throughput collapse or deadlocks in environments with a synchronization context.
-
-#### 2.2 How does the OS kernel handle I/O asynchronously?
-
-A simplified flow:
-
-1. Application requests a network or file operation.
-2. The runtime invokes OS facilities appropriate for the platform and operation.
-3. The kernel and/or device processes the operation.
-4. Completion is reported through OS mechanisms.
-5. .NET completes the associated asynchronous operation and schedules its continuation.
-
-The exact mechanism differs by OS and I/O type. Windows uses completion mechanisms such as I/O Completion Ports for many socket and file scenarios. Linux commonly uses readiness notification mechanisms such as `epoll` for sockets; newer APIs such as `io_uring` support other I/O models. Do not state that all .NET I/O always uses one specific OS mechanism.
-
-##### File I/O example
-
-```csharp
-public static async Task<string> ReadTextAsync(
-    string path,
-    CancellationToken cancellationToken)
-{
-    return await File.ReadAllTextAsync(path, cancellationToken);
-}
-```
-
-The caller can await the operation without blocking its thread while the asynchronous operation is pending. Actual behavior can vary by OS, filesystem, device, and API; not every operation is guaranteed to be truly asynchronous at the hardware level.
-
-#### 2.3 Task Scheduler and `SynchronizationContext`
-
-- The **Task Scheduler** is relevant to scheduling `Task` work, especially tasks explicitly scheduled through APIs such as `Task.Run`.
-- A **SynchronizationContext** is an abstraction that can direct continuations to a particular environment, such as a UI thread.
-- WPF/WinForms commonly have a UI synchronization context. After `await`, code normally returns to that context so it can update UI controls.
-- ASP.NET Core does not use the classic ASP.NET synchronization context, so context capture usually is not a concern there.
-
-```csharp
-Console.WriteLine($"Before: {Environment.CurrentManagedThreadId}");
-
-await Task.Delay(100);
-
-Console.WriteLine($"After: {Environment.CurrentManagedThreadId}");
-```
-
-The thread ID may change across the `await`. Correct asynchronous code should not depend on a particular thread ID unless the framework explicitly requires thread affinity.
-
-#### 2.4 What does `ConfigureAwait(false)` do, and how can it help?
-
-By default, an `await` may capture the current synchronization context (or a relevant scheduler) so the continuation can return to it. `ConfigureAwait(false)` tells that await not to require resuming on the captured context.
-
-```csharp
-public async Task<string> FetchAsync(HttpClient client)
-{
-    var content = await client
-        .GetStringAsync("https://example.com")
-        .ConfigureAwait(false);
-
-    return content;
-}
-```
-
-##### When it matters
-
-- In reusable libraries that must work in UI and other environments, avoiding context capture can prevent unnecessary context switches.
-- In WPF/WinForms, it can prevent a library continuation from needing the UI thread when the continuation does not use UI objects.
-- In ASP.NET Core, there is normally no classic synchronization context to return to, so it usually provides little or no performance benefit.
-
-##### Important correction
-
-`ConfigureAwait(false)` does **not** mean “always switch to a ThreadPool thread,” and it does not itself make the underlying I/O faster. It means the continuation does not require the captured context. The continuation may run wherever the completion machinery schedules it.
-
-Use it selectively in library code where context affinity is unnecessary. Do not use it in UI code before directly updating UI controls unless you explicitly marshal back to the UI thread.
-
-#### 2.5 `async void` vs `async Task`
-
-Use `async Task` or `async Task<T>` for ordinary asynchronous methods so callers can await completion and observe exceptions. `async void` is mainly for event handlers whose signature requires `void`.
-
-```csharp
-public async Task SaveAsync(CancellationToken cancellationToken)
-{
-    await Task.Delay(10, cancellationToken);
-}
-```
+Covered once in [Concurrency, Threading, and Async](07-concurrency-threading-and-async.md#async-internals): whether `async` uses threads, how the OS completes I/O, `SynchronizationContext`, `ConfigureAwait(false)`, and `async void`.
 
 ---
 
@@ -1874,22 +1722,7 @@ public static async IAsyncEnumerable<int> GenerateAsync(
 
 #### 8.2 Priority queue
 
-.NET 6+ provides `PriorityQueue<TElement, TPriority>`, backed by a heap.
-
-```csharp
-var queue = new PriorityQueue<string, int>();
-
-queue.Enqueue("low priority", 3);
-queue.Enqueue("urgent", 1);
-queue.Enqueue("normal", 2);
-
-while (queue.TryDequeue(out var item, out var priority))
-{
-    Console.WriteLine($"{priority}: {item}");
-}
-```
-
-By default, lower priority values are dequeued first. Enqueue and dequeue are `O(log n)`; peek is `O(1)`.
+See [Data Structures and Algorithms → Priority queues and binary heaps](02-data-structures-and-algorithms.md#4-priority-queues-and-binary-heaps): min-heap by default, `O(log n)` enqueue/dequeue, reversed comparer for a max-heap.
 
 #### 8.3 Thread-safe cache
 
@@ -1939,27 +1772,7 @@ This iterative implementation uses `O(n)` time and `O(1)` extra space.
 
 #### 8.5 Optimize slow LINQ / EF Core queries
 
-1. Inspect generated SQL and query plans.
-2. Confirm filters can use appropriate indexes.
-3. Project only needed columns.
-4. Use `AsNoTracking()` for read-only entity queries.
-5. Avoid client-side evaluation or materializing before filtering.
-6. Avoid N+1 queries.
-7. Use pagination and suitable ordering.
-8. Consider compiled queries only after measurement.
-
-```csharp
-var page = await db.Orders
-    .AsNoTracking()
-    .Where(o => o.CustomerId == customerId)
-    .OrderByDescending(o => o.CreatedAt)
-    .ThenByDescending(o => o.Id)
-    .Select(o => new OrderSummaryDto(o.Id, o.CreatedAt, o.Total))
-    .Take(50)
-    .ToListAsync(cancellationToken);
-```
-
-For deep pagination, keyset pagination using the last seen ordering values may perform better than large `Skip` values.
+Covered once in [EF Core, LINQ, and SQL → Performance engineering](05-efcore-linq-and-sql.md): inspect SQL and plans → project → `AsNoTracking` → avoid N+1 → paginate (keyset for deep pages) → measure.
 
 #### 8.6 Request/response body logging middleware
 
@@ -2008,35 +1821,11 @@ This is an in-process queue. It does not survive process failure. Use a durable 
 
 #### 8.8 `Parallel.ForEach` vs `Task.WhenAll`
 
-- `Parallel.ForEach` is primarily suited to CPU-bound parallel loops.
-- `Task.WhenAll` waits for multiple tasks and is often appropriate for concurrent I/O operations.
-- Do not launch unbounded tasks for millions of items; use bounded concurrency.
-
-```csharp
-var tasks = ids.Select(async id =>
-{
-    return await client.GetStringAsync($"/items/{id}", cancellationToken);
-});
-
-var results = await Task.WhenAll(tasks);
-```
-
-For large input sets, limit concurrent calls with `SemaphoreSlim`, a bounded channel, or a concurrency-limiting library.
+`Parallel.ForEach` is for CPU-bound loops; `Task.WhenAll` is for concurrent I/O. Examples and pitfalls are in [Concurrency, Threading, and Async](07-concurrency-threading-and-async.md). For millions of items, bound the concurrency with `SemaphoreSlim`, a bounded channel, or `Parallel.ForEachAsync` with `MaxDegreeOfParallelism`.
 
 #### 8.9 `System.Text.Json`
 
-Use the built-in serializer and source generation when appropriate rather than writing a custom JSON serializer unless there is a specific, measured requirement.
-
-```csharp
-var options = new System.Text.Json.JsonSerializerOptions
-{
-    PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
-};
-
-string json = System.Text.Json.JsonSerializer.Serialize(product, options);
-ProductDto? result =
-    System.Text.Json.JsonSerializer.Deserialize<ProductDto>(json, options);
-```
+Use the built-in serializer (and source generation, shown in 1.5 above) rather than writing a custom JSON serializer, unless there is a specific, measured requirement. Reuse one `JsonSerializerOptions` instance; creating it per call is expensive.
 
 ---
 
@@ -2072,15 +1861,7 @@ Avoid absolute statements such as “async always makes an API faster,” “mic
 
 ## Additional Questpond question sets
 
-### Questpond source: 09-design-pattern-architecture.md
-
----
-
-
-
----
-
-#### Design Pattern and Architecture
+### Design Pattern and Architecture
 
 ##### Design patterns
 
