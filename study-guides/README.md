@@ -48,6 +48,7 @@ Chat transcript labels ("You said", "ChatGPT said") and import labels have been 
 - `csharp_data_types_and_collections_cheatsheet.md`
 - `senior_csharp_code_review_refactoring_interview_guide.md`
 - `shallow-vs-deep-clone.md`
+- `get-property-using-type-csharp.md`
 
 ### [Data Structures and Algorithms](02-data-structures-and-algorithms.md)
 
@@ -103,6 +104,7 @@ Chat transcript labels ("You said", "ChatGPT said") and import labels have been 
 ### [Concurrency, Threading, and Async](07-concurrency-threading-and-async.md)
 
 - `csharp-concurrency-span-stack-queue.md`
+- `dotnet-synchronization-primitives.md` (merged into the synchronization primitives section)
 - `csharp-task-parallelism-interview-notes.md`
 - `dotnet-threading-async-await-senior-viva.md`
 - `senior_dotnet_async_locking_distributed_guide.md` (async/locking part)

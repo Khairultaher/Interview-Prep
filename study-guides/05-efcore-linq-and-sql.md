@@ -2300,22 +2300,91 @@ INSERT INTO dbo.DepartmentSales VALUES
 | `ROLLUP` | `(Department, SalesYear)`, `(Department)`, `()` | Hierarchical subtotals and grand total |
 | `CUBE` | `(Department, SalesYear)`, `(Department)`, `(SalesYear)`, `()` | Every combination |
 
+**Sample data** (`dbo.DepartmentSales`):
+
+| Department | SalesYear | Amount |
+|---|---|---|
+| HR | 2023 | 100 |
+| HR | 2024 | 200 |
+| IT | 2023 | 300 |
+| IT | 2024 | 400 |
+
+In the results below, `NULL` means "all values" for that column, so that row is a subtotal or the grand total. Without `ORDER BY` the row order isn't guaranteed; the rows are shown grouped for readability.
+
+##### `GROUPING SETS`: only the groupings you ask for
+
 ```sql
--- Custom groupings
 SELECT Department, SalesYear, SUM(Amount) AS Total
 FROM dbo.DepartmentSales
 GROUP BY GROUPING SETS ((Department, SalesYear), (Department), ());
+```
 
--- Hierarchical totals
+| Department | SalesYear | Total | Comes from |
+|---|---|---|---|
+| HR | 2023 | 100 | `(Department, SalesYear)` |
+| HR | 2024 | 200 | `(Department, SalesYear)` |
+| IT | 2023 | 300 | `(Department, SalesYear)` |
+| IT | 2024 | 400 | `(Department, SalesYear)` |
+| HR | NULL | 300 | `(Department)`: HR subtotal |
+| IT | NULL | 700 | `(Department)`: IT subtotal |
+| NULL | NULL | 1000 | `()`: grand total |
+
+You pick the groupings. For example, `GROUPING SETS ((Department), (SalesYear))` would return **only** the department totals and the year totals, with no detail rows and no grand total.
+
+##### `ROLLUP`: hierarchical subtotals (left to right)
+
+```sql
 SELECT Department, SalesYear, SUM(Amount) AS Total
 FROM dbo.DepartmentSales
 GROUP BY ROLLUP (Department, SalesYear);
+```
 
--- All grouping combinations
+| Department | SalesYear | Total | Level |
+|---|---|---|---|
+| HR | 2023 | 100 | Detail |
+| HR | 2024 | 200 | Detail |
+| HR | NULL | 300 | HR subtotal |
+| IT | 2023 | 300 | Detail |
+| IT | 2024 | 400 | Detail |
+| IT | NULL | 700 | IT subtotal |
+| NULL | NULL | 1000 | Grand total |
+
+These are the same rows as the `GROUPING SETS` query above, because `ROLLUP (A, B)` is shorthand for `GROUPING SETS ((A, B), (A), ())`. Column order matters: `ROLLUP (SalesYear, Department)` would give **year** subtotals instead.
+
+##### `CUBE`: every combination
+
+```sql
 SELECT Department, SalesYear, SUM(Amount) AS Total
 FROM dbo.DepartmentSales
 GROUP BY CUBE (Department, SalesYear);
 ```
+
+| Department | SalesYear | Total | Level |
+|---|---|---|---|
+| HR | 2023 | 100 | Detail |
+| HR | 2024 | 200 | Detail |
+| IT | 2023 | 300 | Detail |
+| IT | 2024 | 400 | Detail |
+| HR | NULL | 300 | Department subtotal |
+| IT | NULL | 700 | Department subtotal |
+| NULL | 2023 | 400 | **Year subtotal** (only `CUBE` adds these) |
+| NULL | 2024 | 600 | **Year subtotal** |
+| NULL | NULL | 1000 | Grand total |
+
+`CUBE (A, B)` = `GROUPING SETS ((A, B), (A), (B), ())`. With *n* columns it produces 2ⁿ groupings, so use it carefully on many columns.
+
+**Tip: label the subtotal rows.** A real `NULL` in the data looks the same as a subtotal `NULL`. Use `GROUPING()` to tell them apart:
+
+```sql
+SELECT
+    CASE WHEN GROUPING(Department) = 1 THEN 'All departments' ELSE Department END AS Department,
+    CASE WHEN GROUPING(SalesYear)  = 1 THEN 'All years' ELSE CAST(SalesYear AS varchar(10)) END AS SalesYear,
+    SUM(Amount) AS Total
+FROM dbo.DepartmentSales
+GROUP BY ROLLUP (Department, SalesYear);
+```
+
+`GROUPING(col)` returns `1` when that column was rolled up for the row, and `0` otherwise.
 
 `NULL` in subtotal rows represents an aggregated-away dimension, but source data can also contain real `NULL`s. Use `GROUPING(Department)` or `GROUPING_ID(Department, SalesYear)` to distinguish them. `ORDER BY` is needed for a guaranteed display order.
 
