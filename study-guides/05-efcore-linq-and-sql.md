@@ -5,6 +5,7 @@ Each concept is explained once. Where several notes covered the same topic, they
 ## Contents
 
 - [EF Core & LINQ: Senior .NET Engineer / Solution Architect Interview Guide](#ef-core-linq-senior-interview-guide-md)
+- [LINQ Complex Queries: Joins and Grouping (Viva Practice)](#linq-joins-and-grouping-practice)
 - [EF Core Viva — More Quick Questions](#ef-core-viva-preparation-md)
 - [EF Core Performance: Hands-On Benchmark Lab](#ef-core-performance-interview-and-benchmark-lab-md)
 - [SQL Server: Grouping, PIVOT/UNPIVOT, and Window Functions](#sql-server-advanced-grouping-and-window-functions-md)
@@ -966,6 +967,8 @@ var totals = await db.OrderLines
 
 Returning full `IGrouping<TKey,TElement>` objects is not equivalent to SQL `GROUP BY` and may require client-side grouping or may not translate, depending on version and query shape.
 
+For worked examples of every join type, multi-table joins, and grouping across joined tables, see [LINQ Complex Queries: Joins and Grouping](#linq-joins-and-grouping-practice).
+
 ##### 7.5 Deferred execution and repeated enumeration
 
 ```csharp
@@ -1390,6 +1393,1256 @@ Before a senior/architect interview, make sure you can explain and demonstrate:
 - Interceptors: https://learn.microsoft.com/ef/core/logging-events-diagnostics/interceptors
 - Testing: https://learn.microsoft.com/ef/core/testing/
 - LINQ documentation: https://learn.microsoft.com/dotnet/csharp/linq/
+
+---
+
+<a id="linq-joins-and-grouping-practice"></a>
+
+## LINQ Complex Queries: Joins and Grouping (Viva Practice)
+
+Hands-on examples for the questions most often asked in a viva: every join type, joining many tables, and grouping across joined tables. Each query is shown in both **query syntax** (query expression: `from … join … group … select`) and **method syntax** (lambda: `.Join(…)`, `.GroupBy(…)`, `.Select(…)`), so you can compare the two forms and write either one when asked. The compiler turns query syntax into the same method calls. Sections 7.3 and 7.4 above give the short theory; this section is the practice set.
+
+> Every `q` below is an `IQueryable` against EF Core unless noted; execute it with `ToListAsync()`. The same queries also run in LINQ to Objects (on `List<T>`), except where a note says otherwise. Always confirm translation with `ToQueryString()`.
+
+#### 1. Sample model
+
+```csharp
+public enum OrderStatus { Pending, Shipped, Delivered, Cancelled }
+
+public class Customer
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = "";
+    public string City { get; set; } = "";
+    public List<Order> Orders { get; set; } = [];
+}
+
+public class Order
+{
+    public int Id { get; set; }
+    public int CustomerId { get; set; }
+    public Customer Customer { get; set; } = null!;
+    public int? EmployeeId { get; set; }             // sales rep, optional
+    public Employee? Employee { get; set; }
+    public DateTime OrderDate { get; set; }
+    public OrderStatus Status { get; set; }
+    public List<OrderLine> Lines { get; set; } = [];
+}
+
+public class OrderLine
+{
+    public int Id { get; set; }
+    public int OrderId { get; set; }
+    public Order Order { get; set; } = null!;
+    public int ProductId { get; set; }
+    public Product Product { get; set; } = null!;
+    public int Quantity { get; set; }
+    public decimal UnitPrice { get; set; }
+}
+
+public class Product
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = "";
+    public decimal ListPrice { get; set; }
+    public int CategoryId { get; set; }
+    public Category Category { get; set; } = null!;
+    public List<OrderLine> OrderLines { get; set; } = [];
+}
+
+public class Category
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = "";
+    public List<Product> Products { get; set; } = [];
+}
+
+public class Department
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = "";
+    public List<Employee> Employees { get; set; } = [];
+}
+
+public class Employee
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = "";
+    public decimal Salary { get; set; }
+    public int? DepartmentId { get; set; }           // nullable on purpose
+    public Department? Department { get; set; }
+    public int? ManagerId { get; set; }              // self-reference
+    public Employee? Manager { get; set; }
+}
+
+public class ShipmentLine                            // no FK navigation: joined by composite key
+{
+    public int Id { get; set; }
+    public int OrderId { get; set; }
+    public int ProductId { get; set; }
+    public int ShippedQty { get; set; }
+}
+
+public class Promotion                               // joined by date range, not by key
+{
+    public int Id { get; set; }
+    public string Code { get; set; } = "";
+    public DateTime StartDate { get; set; }
+    public DateTime EndDate { get; set; }
+}
+```
+
+Small data set used to explain join results:
+
+| Departments | | Employees | | | |
+|---|---|---|---|---|---|
+| **Id** | **Name** | **Name** | **DepartmentId** | **ManagerId** | **Salary** |
+| 1 | IT | Rahim (Id 1) | 1 | — | 900 |
+| 2 | HR | Karim (Id 2) | 1 | 1 | 600 |
+| 3 | Finance | Sara (Id 3) | 2 | 1 | 700 |
+| | | Nila (Id 4) | — | 2 | 650 |
+
+What each join returns for `Employees` (left) and `Departments` (right):
+
+| Join type | Rows returned | Count |
+|---|---|---|
+| Inner | Rahim–IT, Karim–IT, Sara–HR | 3 |
+| Left outer | inner rows + Nila–NULL | 4 |
+| Right outer | inner rows + NULL–Finance | 4 |
+| Full outer | inner rows + Nila–NULL + NULL–Finance | 5 |
+| Cross | every employee × every department | 4 × 3 = 12 |
+| Semi (departments that have employees) | IT, HR (IT appears once, not twice) | 2 |
+| Anti (departments without employees) | Finance | 1 |
+| Anti (employees without a department) | Nila | 1 |
+
+---
+
+#### 2. Inner join
+
+```csharp
+// Query syntax
+var q =
+    from e in db.Employees
+    join d in db.Departments on e.DepartmentId equals (int?)d.Id
+    select new { Employee = e.Name, Department = d.Name };
+
+// Method syntax
+var q2 = db.Employees.Join(
+    db.Departments,
+    e => e.DepartmentId,          // outer key
+    d => (int?)d.Id,              // inner key
+    (e, d) => new { Employee = e.Name, Department = d.Name });
+
+// Navigation (preferred when the relationship is mapped)
+var q3 = db.Employees
+    .Where(e => e.Department != null)
+    .Select(e => new { Employee = e.Name, Department = e.Department!.Name });
+```
+
+```sql
+SELECT e.Name, d.Name
+FROM Employees e
+INNER JOIN Departments d ON e.DepartmentId = d.Id;
+```
+
+Viva points:
+- `join` uses the keyword `equals`, not `==`. The **outer** sequence's key goes on the left and the **inner** key on the right; swapping them is a compile error.
+- Both keys must have the same type. `int?` vs `int` fails type inference, so cast one side: `(int?)d.Id`.
+- `join` supports **only equality**. For `<`, `>`, or `BETWEEN`, see [non-equi join](#linq-non-equi-join).
+
+---
+
+#### 3. Joining many tables (inner)
+
+Customer → Order → OrderLine → Product → Category:
+
+```csharp
+var q =
+    from c in db.Customers
+    join o in db.Orders on c.Id equals o.CustomerId
+    join l in db.OrderLines on o.Id equals l.OrderId
+    join p in db.Products on l.ProductId equals p.Id
+    join cat in db.Categories on p.CategoryId equals cat.Id
+    where o.Status == OrderStatus.Delivered
+    select new
+    {
+        Customer = c.Name,
+        OrderId = o.Id,
+        Product = p.Name,
+        Category = cat.Name,
+        LineTotal = l.Quantity * l.UnitPrice
+    };
+```
+
+Method syntax needs an intermediate anonymous object after every `Join` (this is what the compiler generates for query syntax, called *transparent identifiers*):
+
+```csharp
+var q2 = db.Customers
+    .Join(db.Orders,     c => c.Id,          o => o.CustomerId, (c, o) => new { c, o })
+    .Join(db.OrderLines, x => x.o.Id,        l => l.OrderId,    (x, l) => new { x.c, x.o, l })
+    .Join(db.Products,   x => x.l.ProductId, p => p.Id,         (x, p) => new { x.c, x.o, x.l, p })
+    .Join(db.Categories, x => x.p.CategoryId, cat => cat.Id,    (x, cat) => new { x.c, x.o, x.l, x.p, cat })
+    .Where(x => x.o.Status == OrderStatus.Delivered)
+    .Select(x => new
+    {
+        Customer = x.c.Name,
+        OrderId = x.o.Id,
+        Product = x.p.Name,
+        Category = x.cat.Name,
+        LineTotal = x.l.Quantity * x.l.UnitPrice
+    });
+```
+
+The same result with navigations; EF generates the joins:
+
+```csharp
+var q3 = db.OrderLines
+    .Where(l => l.Order.Status == OrderStatus.Delivered)
+    .Select(l => new
+    {
+        Customer = l.Order.Customer.Name,
+        OrderId = l.OrderId,
+        Product = l.Product.Name,
+        Category = l.Product.Category.Name,
+        LineTotal = l.Quantity * l.UnitPrice
+    });
+```
+
+**Start from the table at the grain you need.** Here one result row = one order line, so start from `OrderLines`. Joining one-to-many multiplies rows (fan-out): a customer with 3 orders × 4 lines appears 12 times.
+
+---
+
+#### 4. Left outer join
+
+##### 4.1 Classic pattern: `join … into` + `DefaultIfEmpty()`
+
+```csharp
+var q =
+    from e in db.Employees
+    join d in db.Departments on e.DepartmentId equals (int?)d.Id into deptGroup
+    from d in deptGroup.DefaultIfEmpty()
+    select new
+    {
+        Employee = e.Name,
+        Department = d != null ? d.Name : "(none)"
+    };
+// Rahim–IT, Karim–IT, Sara–HR, Nila–(none)
+```
+
+Method syntax:
+
+```csharp
+var q2 = db.Employees
+    .GroupJoin(db.Departments,
+        e => e.DepartmentId,
+        d => (int?)d.Id,
+        (e, depts) => new { e, depts })
+    .SelectMany(
+        x => x.depts.DefaultIfEmpty(),
+        (x, d) => new
+        {
+            Employee = x.e.Name,
+            Department = d != null ? d.Name : "(none)"
+        });
+```
+
+How it works: `GroupJoin` pairs each employee with a (possibly empty) collection of matching departments, `DefaultIfEmpty()` turns an empty collection into one `null`, and `SelectMany` flattens it back to rows.
+
+##### 4.2 Shorter form: `from … in …Where(…).DefaultIfEmpty()`
+
+```csharp
+var q =
+    from e in db.Employees
+    from d in db.Departments
+        .Where(d => d.Id == e.DepartmentId)
+        .DefaultIfEmpty()
+    select new { Employee = e.Name, Department = d != null ? d.Name : "(none)" };
+
+// Method syntax
+var q2 = db.Employees.SelectMany(
+    e => db.Departments
+        .Where(d => d.Id == e.DepartmentId)
+        .DefaultIfEmpty(),
+    (e, d) => new { Employee = e.Name, Department = d != null ? d.Name : "(none)" });
+```
+
+EF translates this to `LEFT JOIN`. This form also allows extra conditions and non-equality conditions inside the `Where`.
+
+##### 4.3 .NET 10 / EF Core 10: `LeftJoin` operator
+
+```csharp
+var q = db.Employees.LeftJoin(
+    db.Departments,
+    e => e.DepartmentId,
+    d => (int?)d.Id,
+    (e, d) => new { Employee = e.Name, Department = d != null ? d.Name : "(none)" });
+```
+
+There is no new query-syntax keyword; in query syntax you still write `join … into … DefaultIfEmpty()`.
+
+##### 4.4 Trap: filtering the right side in `where` turns it into an inner join
+
+Requirement: *all departments, with their employees earning more than 600; keep departments that have none.*
+
+```csharp
+// WRONG: the where runs after the join; rows with e == null are removed,
+// so Finance disappears. (In LINQ to Objects, e.Salary on null also throws.)
+var wrong =
+    from d in db.Departments
+    join e in db.Employees on (int?)d.Id equals e.DepartmentId into eg
+    from e in eg.DefaultIfEmpty()
+    where e.Salary > 600
+    select new { Department = d.Name, Employee = e.Name };
+
+// RIGHT: filter the right side before it is joined (SQL: condition in ON).
+var right =
+    from d in db.Departments
+    join e in db.Employees.Where(x => x.Salary > 600)
+        on (int?)d.Id equals e.DepartmentId into eg
+    from e in eg.DefaultIfEmpty()
+    select new { Department = d.Name, Employee = e != null ? e.Name : null };
+// IT–Rahim, HR–Sara, Finance–NULL
+
+// RIGHT, method syntax
+var right2 = db.Departments
+    .GroupJoin(db.Employees.Where(x => x.Salary > 600),
+        d => (int?)d.Id,
+        e => e.DepartmentId,
+        (d, emps) => new { d, emps })
+    .SelectMany(
+        x => x.emps.DefaultIfEmpty(),
+        (x, e) => new { Department = x.d.Name, Employee = e != null ? e.Name : null });
+```
+
+```sql
+-- right
+SELECT d.Name, e.Name
+FROM Departments d
+LEFT JOIN Employees e ON e.DepartmentId = d.Id AND e.Salary > 600;
+```
+
+##### 4.5 Left join across several tables
+
+Every order with its customer (required), sales rep (optional), and the rep's department (optional):
+
+```csharp
+var q =
+    from o in db.Orders
+    join c in db.Customers on o.CustomerId equals c.Id                    // inner
+    join e in db.Employees on o.EmployeeId equals (int?)e.Id into reps    // left
+    from e in reps.DefaultIfEmpty()
+    join d in db.Departments on e.DepartmentId equals (int?)d.Id into ds  // left, chained
+    from d in ds.DefaultIfEmpty()
+    select new
+    {
+        OrderId = o.Id,
+        Customer = c.Name,
+        SalesRep = e != null ? e.Name : null,
+        Department = d != null ? d.Name : null
+    };
+
+// Method syntax: Join for the inner join, GroupJoin + SelectMany for each left join
+var q1 = db.Orders
+    .Join(db.Customers, o => o.CustomerId, c => c.Id, (o, c) => new { o, c })
+    .GroupJoin(db.Employees, x => x.o.EmployeeId, e => (int?)e.Id, (x, reps) => new { x.o, x.c, reps })
+    .SelectMany(x => x.reps.DefaultIfEmpty(), (x, e) => new { x.o, x.c, e })
+    .GroupJoin(db.Departments, x => x.e.DepartmentId, d => (int?)d.Id, (x, ds) => new { x.o, x.c, x.e, ds })
+    .SelectMany(x => x.ds.DefaultIfEmpty(), (x, d) => new
+    {
+        OrderId = x.o.Id,
+        Customer = x.c.Name,
+        SalesRep = x.e != null ? x.e.Name : null,
+        Department = d != null ? d.Name : null
+    });
+```
+
+`e.DepartmentId` when `e` is null works in EF (SQL null semantics) but throws in LINQ to Objects. The navigation version is shorter, and EF makes optional navigations `LEFT JOIN`s automatically:
+
+```csharp
+var q2 = db.Orders.Select(o => new
+{
+    OrderId = o.Id,
+    Customer = o.Customer.Name,              // required -> INNER JOIN
+    SalesRep = o.Employee!.Name,             // optional -> LEFT JOIN, null if missing
+    Department = o.Employee!.Department!.Name
+});
+```
+
+Null-conditional `?.` is **not allowed in expression trees** (compiler error CS8072), so use `x != null ? x.Prop : null`, or `!` with EF's null propagation.
+
+---
+
+#### 5. Right outer join
+
+LINQ query syntax has no right join. Swap the sides and use a left join:
+
+```csharp
+// "Employees RIGHT JOIN Departments" == "Departments LEFT JOIN Employees"
+var q =
+    from d in db.Departments
+    join e in db.Employees on (int?)d.Id equals e.DepartmentId into eg
+    from e in eg.DefaultIfEmpty()
+    select new { Employee = e != null ? e.Name : null, Department = d.Name };
+// Rahim–IT, Karim–IT, Sara–HR, NULL–Finance
+
+// Method syntax
+var q1 = db.Departments
+    .GroupJoin(db.Employees, d => (int?)d.Id, e => e.DepartmentId, (d, emps) => new { d, emps })
+    .SelectMany(
+        x => x.emps.DefaultIfEmpty(),
+        (x, e) => new { Employee = e != null ? e.Name : null, Department = x.d.Name });
+```
+
+.NET 10 / EF Core 10 adds `RightJoin`, which keeps every **inner** row:
+
+```csharp
+var q2 = db.Employees.RightJoin(
+    db.Departments,
+    e => e.DepartmentId,
+    d => (int?)d.Id,
+    (e, d) => new { Employee = e != null ? e.Name : null, Department = d.Name });
+```
+
+---
+
+#### 6. Full outer join
+
+There is no full-join operator. Combine a **left join** with the **right-only rows** (a right anti join):
+
+```csharp
+var leftPart =
+    from e in db.Employees
+    join d in db.Departments on e.DepartmentId equals (int?)d.Id into dg
+    from d in dg.DefaultIfEmpty()
+    select new { Employee = e.Name, Department = d != null ? d.Name : null };
+
+var rightOnly =
+    from d in db.Departments
+    where !db.Employees.Any(e => e.DepartmentId == d.Id)
+    select new { Employee = (string?)null, Department = d.Name };
+
+var fullOuter = leftPart.Concat(rightOnly);   // SQL: UNION ALL
+// Rahim–IT, Karim–IT, Sara–HR, Nila–NULL, NULL–Finance
+
+// Method syntax
+var leftPart2 = db.Employees
+    .GroupJoin(db.Departments, e => e.DepartmentId, d => (int?)d.Id, (e, ds) => new { e, ds })
+    .SelectMany(
+        x => x.ds.DefaultIfEmpty(),
+        (x, d) => new { Employee = x.e.Name, Department = d != null ? d.Name : null });
+
+var rightOnly2 = db.Departments
+    .Where(d => !db.Employees.Any(e => e.DepartmentId == d.Id))
+    .Select(d => new { Employee = (string?)null, Department = d.Name });
+
+var fullOuter2 = leftPart2.Concat(rightOnly2);
+```
+
+- Use `Concat` (`UNION ALL`) rather than `Union` (`UNION`): the two parts never overlap, and `Union` would also remove genuinely duplicate rows and add a distinct/sort step.
+- Both projections must have the same shape: the same property names, order, and types.
+- If the provider can't translate the set operation, run both halves and `Concat` in memory.
+
+---
+
+#### 7. Cross join
+
+```csharp
+// Query syntax: two from clauses with no condition
+var q =
+    from e in db.Employees
+    from d in db.Departments
+    select new { Employee = e.Name, Department = d.Name };   // 4 × 3 = 12 rows
+
+// Method syntax
+var q2 = db.Employees.SelectMany(
+    e => db.Departments,
+    (e, d) => new { Employee = e.Name, Department = d.Name });
+```
+
+Real use: build a complete grid, then left join actual data onto it so missing combinations show as zero (for example every category × every month in a sales report).
+
+---
+
+#### 8. Self join
+
+```csharp
+// Employee with manager (left self join keeps the top boss)
+var q =
+    from e in db.Employees
+    join m in db.Employees on e.ManagerId equals (int?)m.Id into mg
+    from m in mg.DefaultIfEmpty()
+    select new { Employee = e.Name, Manager = m != null ? m.Name : "(top)" };
+// Rahim–(top), Karim–Rahim, Sara–Rahim, Nila–Karim
+
+// Classic viva question: employees earning more than their manager
+var q2 =
+    from e in db.Employees
+    join m in db.Employees on e.ManagerId equals (int?)m.Id
+    where e.Salary > m.Salary
+    select new { Employee = e.Name, e.Salary, Manager = m.Name, ManagerSalary = m.Salary };
+// Nila (650) > Karim (600)
+
+// Managers with their number of direct reports (self join + group)
+var q3 =
+    from e in db.Employees
+    join m in db.Employees on e.ManagerId equals (int?)m.Id
+    group e by new { m.Id, m.Name } into g
+    select new { Manager = g.Key.Name, DirectReports = g.Count() };
+// Rahim 2, Karim 1
+```
+
+The same three queries in method syntax:
+
+```csharp
+var m1 = db.Employees
+    .GroupJoin(db.Employees, e => e.ManagerId, m => (int?)m.Id, (e, ms) => new { e, ms })
+    .SelectMany(
+        x => x.ms.DefaultIfEmpty(),
+        (x, m) => new { Employee = x.e.Name, Manager = m != null ? m.Name : "(top)" });
+
+var m2 = db.Employees
+    .Join(db.Employees, e => e.ManagerId, m => (int?)m.Id, (e, m) => new { e, m })
+    .Where(x => x.e.Salary > x.m.Salary)
+    .Select(x => new { Employee = x.e.Name, x.e.Salary, Manager = x.m.Name, ManagerSalary = x.m.Salary });
+
+var m3 = db.Employees
+    .Join(db.Employees, e => e.ManagerId, m => (int?)m.Id, (e, m) => new { e, m })
+    .GroupBy(x => new { x.m.Id, x.m.Name })
+    .Select(g => new { Manager = g.Key.Name, DirectReports = g.Count() });
+
+// Navigation version of the first query
+var m4 = db.Employees.Select(e => new
+{
+    Employee = e.Name,
+    Manager = e.Manager != null ? e.Manager.Name : "(top)"
+});
+```
+
+---
+
+#### 9. Semi join and anti join (`EXISTS` / `NOT EXISTS`)
+
+```csharp
+// Semi join: departments that have at least one employee      -> IT, HR
+var withStaff  = db.Departments.Where(d => d.Employees.Any());                                // method
+var withStaffQ = from d in db.Departments where d.Employees.Any() select d;                   // query
+
+// Without a navigation: correlate on the key
+var withStaff2  = db.Departments.Where(d => db.Employees.Any(e => e.DepartmentId == d.Id));
+var withStaff2Q = from d in db.Departments
+                  where db.Employees.Any(e => e.DepartmentId == d.Id)
+                  select d;
+
+// Anti join: departments with no employees                     -> Finance
+var empty  = db.Departments.Where(d => !d.Employees.Any());
+var emptyQ = from d in db.Departments where !d.Employees.Any() select d;
+
+// Anti join written as left join + null check (query syntax)
+var empty2 =
+    from d in db.Departments
+    join e in db.Employees on (int?)d.Id equals e.DepartmentId into eg
+    from e in eg.DefaultIfEmpty()
+    where e == null
+    select d.Name;
+
+// Same, method syntax
+var empty3 = db.Departments
+    .GroupJoin(db.Employees, d => (int?)d.Id, e => e.DepartmentId, (d, emps) => new { d, emps })
+    .SelectMany(x => x.emps.DefaultIfEmpty(), (x, e) => new { x.d, e })
+    .Where(x => x.e == null)
+    .Select(x => x.d.Name);
+
+// Multi-level semi join: customers who bought anything in "Electronics"
+var buyers = db.Customers.Where(c =>
+    c.Orders.Any(o => o.Lines.Any(l => l.Product.Category.Name == "Electronics")));
+
+var buyersQ =
+    from c in db.Customers
+    where c.Orders.Any(o => o.Lines.Any(l => l.Product.Category.Name == "Electronics"))
+    select c;
+
+// IN list
+int[] ids = [1, 3];
+var some  = db.Departments.Where(d => ids.Contains(d.Id));             // WHERE Id IN (...)
+var someQ = from d in db.Departments where ids.Contains(d.Id) select d;
+```
+
+Why `Any()` instead of a join plus `Distinct()`: a join returns IT twice (two employees), so you'd need `Distinct()`. `Any()` expresses "exists", translates to `EXISTS`, and never duplicates the outer row.
+
+---
+
+#### 10. Composite-key join
+
+The anonymous types on both sides must have the **same property names and types, in the same order**:
+
+```csharp
+var q =
+    from l in db.OrderLines
+    join s in db.ShipmentLines
+        on new { l.OrderId, l.ProductId } equals new { s.OrderId, s.ProductId }
+    select new { l.OrderId, l.ProductId, l.Quantity, s.ShippedQty };
+
+// When the column names differ, name the members explicitly:
+//   on new { K1 = a.OrderNo, K2 = a.Sku } equals new { K1 = b.OrderId, K2 = b.ProductCode }
+```
+
+Method syntax:
+
+```csharp
+var q2 = db.OrderLines.Join(
+    db.ShipmentLines,
+    l => new { l.OrderId, l.ProductId },
+    s => new { s.OrderId, s.ProductId },
+    (l, s) => new { l.OrderId, l.ProductId, l.Quantity, s.ShippedQty });
+```
+
+**Group, then join (a common complex query):** one order line can have several shipments, so total the shipments first, then left join to find the pending quantity:
+
+```csharp
+var shipped =
+    from s in db.ShipmentLines
+    group s by new { s.OrderId, s.ProductId } into g
+    select new { g.Key.OrderId, g.Key.ProductId, Qty = g.Sum(x => x.ShippedQty) };
+
+var pending =
+    from l in db.OrderLines
+    join s in shipped
+        on new { l.OrderId, l.ProductId } equals new { s.OrderId, s.ProductId } into sg
+    from s in sg.DefaultIfEmpty()
+    let shippedQty = s != null ? s.Qty : 0
+    where l.Quantity > shippedQty
+    select new
+    {
+        l.OrderId,
+        l.ProductId,
+        Ordered = l.Quantity,
+        Shipped = shippedQty,
+        Pending = l.Quantity - shippedQty
+    };
+
+// Method syntax (`let` becomes an extra Select that carries the value forward)
+var shipped2 = db.ShipmentLines
+    .GroupBy(s => new { s.OrderId, s.ProductId })
+    .Select(g => new { g.Key.OrderId, g.Key.ProductId, Qty = g.Sum(x => x.ShippedQty) });
+
+var pending2 = db.OrderLines
+    .GroupJoin(shipped2,
+        l => new { l.OrderId, l.ProductId },
+        s => new { s.OrderId, s.ProductId },
+        (l, sg) => new { l, sg })
+    .SelectMany(x => x.sg.DefaultIfEmpty(), (x, s) => new { x.l, ShippedQty = s != null ? s.Qty : 0 })
+    .Where(x => x.l.Quantity > x.ShippedQty)
+    .Select(x => new
+    {
+        x.l.OrderId,
+        x.l.ProductId,
+        Ordered = x.l.Quantity,
+        Shipped = x.ShippedQty,
+        Pending = x.l.Quantity - x.ShippedQty
+    });
+```
+
+Joining the raw `ShipmentLines` instead would multiply each order line by its number of shipments.
+
+---
+
+<a id="linq-non-equi-join"></a>
+
+#### 11. Non-equi join (range / inequality)
+
+`join … equals` can't express ranges. Use a second `from` with a `Where`:
+
+```csharp
+// Each order with the promotion active on its date (left join, range condition)
+var q =
+    from o in db.Orders
+    from p in db.Promotions
+        .Where(p => o.OrderDate >= p.StartDate && o.OrderDate <= p.EndDate)
+        .DefaultIfEmpty()
+    select new { o.Id, o.OrderDate, Promo = p != null ? p.Code : null };
+
+// Method syntax
+var q2 = db.Orders.SelectMany(
+    o => db.Promotions
+        .Where(p => o.OrderDate >= p.StartDate && o.OrderDate <= p.EndDate)
+        .DefaultIfEmpty(),
+    (o, p) => new { o.Id, o.OrderDate, Promo = p != null ? p.Code : null });
+```
+
+```sql
+SELECT o.Id, o.OrderDate, p.Code
+FROM Orders o
+LEFT JOIN Promotions p ON o.OrderDate >= p.StartDate AND o.OrderDate <= p.EndDate;
+```
+
+Drop `.DefaultIfEmpty()` for an inner join. If promotions overlap, an order appears once per matching promotion.
+
+---
+
+#### 12. Group join: a hierarchical result (not flattened)
+
+```csharp
+// LINQ to Objects
+var q =
+    from c in customers
+    join o in orders on c.Id equals o.CustomerId into custOrders
+    select new
+    {
+        c.Name,
+        OrderCount = custOrders.Count(),
+        Orders = custOrders.Select(o => new { o.Id, o.OrderDate }).ToList()
+    };
+
+// LINQ to Objects, method syntax
+var q1 = customers.GroupJoin(
+    orders,
+    c => c.Id,
+    o => o.CustomerId,
+    (c, custOrders) => new
+    {
+        c.Name,
+        OrderCount = custOrders.Count(),
+        Orders = custOrders.Select(o => new { o.Id, o.OrderDate }).ToList()
+    });
+
+// EF Core: use the navigation instead
+var q2 = db.Customers.Select(c => new
+{
+    c.Name,
+    OrderCount = c.Orders.Count(),
+    Orders = c.Orders
+        .OrderByDescending(o => o.OrderDate)
+        .Select(o => new { o.Id, o.OrderDate })
+        .ToList()
+});
+```
+
+In EF Core, a `GroupJoin` that isn't followed by `SelectMany`/`DefaultIfEmpty` (a left join) is not reliably translated, so use the navigation or a correlated subquery.
+
+**`GroupJoin` vs `GroupBy`:** `GroupJoin` correlates **two** sequences, and the outer item is kept even with zero matches. `GroupBy` partitions **one** sequence by a key; a key with no rows can't exist.
+
+---
+
+#### 13. `GroupBy` basics
+
+##### 13.1 Single key with aggregates
+
+```csharp
+var q =
+    from e in db.Employees
+    group e by e.DepartmentId into g
+    select new
+    {
+        DepartmentId = g.Key,                    // null is its own group (Nila)
+        Headcount = g.Count(),
+        TotalSalary = g.Sum(x => x.Salary),
+        AvgSalary = g.Average(x => x.Salary),
+        MinSalary = g.Min(x => x.Salary),
+        MaxSalary = g.Max(x => x.Salary)
+    };
+
+// Method syntax
+var q2 = db.Employees
+    .GroupBy(e => e.DepartmentId)
+    .Select(g => new { DepartmentId = g.Key, Headcount = g.Count(), TotalSalary = g.Sum(x => x.Salary) });
+```
+
+`group X by K`: **X** is what goes into each group (the element), **K** is the key. `group e.Salary by e.DepartmentId` makes each group a list of salaries, so `g.Sum()` needs no lambda.
+
+##### 13.2 Multiple keys (anonymous type)
+
+```csharp
+var q =
+    from o in db.Orders
+    group o by new { o.Customer.City, o.OrderDate.Year } into g
+    orderby g.Key.City, g.Key.Year
+    select new { g.Key.City, g.Key.Year, Orders = g.Count() };
+
+// Method syntax
+var q2 = db.Orders
+    .GroupBy(o => new { o.Customer.City, o.OrderDate.Year })
+    .OrderBy(g => g.Key.City)
+    .ThenBy(g => g.Key.Year)
+    .Select(g => new { g.Key.City, g.Key.Year, Orders = g.Count() });
+```
+
+##### 13.3 `WHERE` vs `HAVING`
+
+```csharp
+var q = db.Orders
+    .Where(o => o.Status != OrderStatus.Cancelled)        // before GroupBy -> WHERE
+    .GroupBy(o => o.CustomerId)
+    .Where(g => g.Count() >= 5)                           // after GroupBy  -> HAVING
+    .Select(g => new { CustomerId = g.Key, Orders = g.Count() })
+    .OrderByDescending(x => x.Orders);
+
+// Query syntax: the where after "into g" is the HAVING
+var q2 =
+    from o in db.Orders
+    where o.Status != OrderStatus.Cancelled
+    group o by o.CustomerId into g
+    where g.Count() >= 5
+    orderby g.Count() descending
+    select new { CustomerId = g.Key, Orders = g.Count() };
+```
+
+```sql
+SELECT CustomerId, COUNT(*) AS Orders
+FROM Orders
+WHERE Status <> 3
+GROUP BY CustomerId
+HAVING COUNT(*) >= 5
+ORDER BY Orders DESC;
+```
+
+##### 13.4 Computed keys
+
+```csharp
+// Year + month
+var monthly =
+    from o in db.Orders
+    group o by new { o.OrderDate.Year, o.OrderDate.Month } into g
+    orderby g.Key.Year, g.Key.Month
+    select new { g.Key.Year, g.Key.Month, Orders = g.Count() };
+
+// Bucket / band (CASE WHEN in SQL)
+var bands =
+    from p in db.Products
+    group p by p.ListPrice < 100 ? "Budget"
+             : p.ListPrice < 500 ? "Mid"
+             : "Premium" into g
+    select new { Band = g.Key, Products = g.Count(), AvgPrice = g.Average(x => x.ListPrice) };
+
+// Method syntax
+var monthly2 = db.Orders
+    .GroupBy(o => new { o.OrderDate.Year, o.OrderDate.Month })
+    .OrderBy(g => g.Key.Year).ThenBy(g => g.Key.Month)
+    .Select(g => new { g.Key.Year, g.Key.Month, Orders = g.Count() });
+
+var bands2 = db.Products
+    .GroupBy(p => p.ListPrice < 100 ? "Budget"
+                : p.ListPrice < 500 ? "Mid"
+                : "Premium")
+    .Select(g => new { Band = g.Key, Products = g.Count(), AvgPrice = g.Average(x => x.ListPrice) });
+```
+
+##### 13.5 Find duplicates
+
+```csharp
+var duplicates = db.Customers
+    .GroupBy(c => new { c.Name, c.City })
+    .Where(g => g.Count() > 1)
+    .Select(g => new { g.Key.Name, g.Key.City, Copies = g.Count() });
+
+// Query syntax
+var duplicatesQ =
+    from c in db.Customers
+    group c by new { c.Name, c.City } into g
+    where g.Count() > 1
+    select new { g.Key.Name, g.Key.City, Copies = g.Count() };
+```
+
+---
+
+#### 14. Join then group (multiple tables)
+
+##### 14.1 Revenue per category (3 tables)
+
+```csharp
+var q =
+    from l in db.OrderLines
+    join p in db.Products on l.ProductId equals p.Id
+    join c in db.Categories on p.CategoryId equals c.Id
+    group l by new { c.Id, c.Name } into g
+    orderby g.Sum(x => x.Quantity * x.UnitPrice) descending
+    select new
+    {
+        CategoryId = g.Key.Id,
+        Category = g.Key.Name,
+        Units = g.Sum(x => x.Quantity),
+        Revenue = g.Sum(x => x.Quantity * x.UnitPrice)
+    };
+
+// Method syntax with explicit joins
+var q2 = db.OrderLines
+    .Join(db.Products,   l => l.ProductId,    p => p.Id, (l, p) => new { l, p })
+    .Join(db.Categories, x => x.p.CategoryId, c => c.Id, (x, c) => new { x.l, c })
+    .GroupBy(x => new { x.c.Id, x.c.Name })
+    .Select(g => new
+    {
+        CategoryId = g.Key.Id,
+        Category = g.Key.Name,
+        Units = g.Sum(x => x.l.Quantity),
+        Revenue = g.Sum(x => x.l.Quantity * x.l.UnitPrice)
+    });
+
+// Navigation version
+var q3 = db.OrderLines
+    .GroupBy(l => new { l.Product.Category.Id, l.Product.Category.Name })
+    .Select(g => new { g.Key.Name, Revenue = g.Sum(l => l.Quantity * l.UnitPrice) });
+```
+
+Group by `Id` **and** `Name`: two categories can share a name, and in SQL every non-aggregated column in the `SELECT` must be in the `GROUP BY`.
+
+##### 14.2 Five tables, three keys, `HAVING`, distinct counts
+
+Delivered revenue by **customer city × category × year**, only groups above 1,000:
+
+```csharp
+var q =
+    from c in db.Customers
+    join o in db.Orders on c.Id equals o.CustomerId
+    join l in db.OrderLines on o.Id equals l.OrderId
+    join p in db.Products on l.ProductId equals p.Id
+    join cat in db.Categories on p.CategoryId equals cat.Id
+    where o.Status == OrderStatus.Delivered
+    group new { l.Quantity, l.UnitPrice, OrderId = o.Id, CustomerId = c.Id }
+        by new { c.City, Category = cat.Name, o.OrderDate.Year } into g
+    let revenue = g.Sum(x => x.Quantity * x.UnitPrice)
+    where revenue > 1_000                                   // HAVING
+    orderby g.Key.Year, revenue descending
+    select new
+    {
+        g.Key.City,
+        g.Key.Category,
+        g.Key.Year,
+        Revenue = revenue,
+        Units = g.Sum(x => x.Quantity),
+        Orders = g.Select(x => x.OrderId).Distinct().Count(),       // COUNT(DISTINCT)
+        Customers = g.Select(x => x.CustomerId).Distinct().Count()
+    };
+```
+
+Method syntax with navigations:
+
+```csharp
+var q2 = db.OrderLines
+    .Where(l => l.Order.Status == OrderStatus.Delivered)
+    .GroupBy(l => new
+    {
+        l.Order.Customer.City,
+        Category = l.Product.Category.Name,
+        l.Order.OrderDate.Year
+    })
+    .Select(g => new
+    {
+        g.Key.City,
+        g.Key.Category,
+        g.Key.Year,
+        Revenue = g.Sum(l => l.Quantity * l.UnitPrice),
+        Orders = g.Select(l => l.OrderId).Distinct().Count()
+    })
+    .Where(x => x.Revenue > 1_000)
+    .OrderBy(x => x.Year)
+    .ThenByDescending(x => x.Revenue);
+```
+
+**Grain trap:** after joining `Orders` to `OrderLines`, `g.Count()` counts **lines**, not orders. Use `Distinct().Count()` on the order ID, or group at the order level. Similarly, `g.Sum(x => x.Order.Freight)` after this join adds the same order's freight once per line.
+
+---
+
+#### 15. Left join + group: include zero counts
+
+Requirement: *every customer with their number of orders, including customers with none.*
+
+```csharp
+// TRAP: g.Count() counts the null row from DefaultIfEmpty, so a customer
+// with no orders gets 1, not 0 (SQL: COUNT(*) instead of COUNT(o.Id)).
+var wrong =
+    from c in db.Customers
+    join o in db.Orders on c.Id equals o.CustomerId into og
+    from o in og.DefaultIfEmpty()
+    group o by new { c.Id, c.Name } into g
+    select new { g.Key.Name, Orders = g.Count() };
+
+// Fix 1: count only non-null rows
+var fixed1 =
+    from c in db.Customers
+    join o in db.Orders on c.Id equals o.CustomerId into og
+    from o in og.DefaultIfEmpty()
+    group o by new { c.Id, c.Name } into g
+    select new { g.Key.Name, Orders = g.Count(o => o != null) };
+
+// Fix 1, method syntax
+var fixed1m = db.Customers
+    .GroupJoin(db.Orders, c => c.Id, o => o.CustomerId, (c, og) => new { c, og })
+    .SelectMany(x => x.og.DefaultIfEmpty(), (x, o) => new { x.c, o })
+    .GroupBy(x => new { x.c.Id, x.c.Name }, x => x.o)     // second lambda = element selector
+    .Select(g => new { g.Key.Name, Orders = g.Count(o => o != null) });
+
+// Fix 2 (simplest): correlated subquery via navigation
+var fixed2 = db.Customers.Select(c => new
+{
+    c.Name,
+    Orders = c.Orders.Count(),
+    Revenue = c.Orders.SelectMany(o => o.Lines).Sum(l => (decimal?)(l.Quantity * l.UnitPrice)) ?? 0
+});
+
+// Fix 2, query syntax
+var fixed2q =
+    from c in db.Customers
+    select new
+    {
+        c.Name,
+        Orders = c.Orders.Count(),
+        Revenue = (from o in c.Orders
+                   from l in o.Lines
+                   select (decimal?)(l.Quantity * l.UnitPrice)).Sum() ?? 0
+    };
+```
+
+`Sum` over an empty set is `NULL` in SQL, so cast to `decimal?` and coalesce with `?? 0`; otherwise EF can throw when it materializes null into a non-nullable `decimal`.
+
+---
+
+#### 16. Conditional aggregation (pivot-style columns)
+
+```csharp
+// Order count per status as columns
+var q =
+    from o in db.Orders
+    group o by new { o.CustomerId, o.Customer.Name } into g
+    select new
+    {
+        Customer = g.Key.Name,
+        Total = g.Count(),
+        Pending = g.Count(o => o.Status == OrderStatus.Pending),
+        Shipped = g.Count(o => o.Status == OrderStatus.Shipped),
+        Delivered = g.Count(o => o.Status == OrderStatus.Delivered),
+        CancelRatePct = 100.0 * g.Count(o => o.Status == OrderStatus.Cancelled) / g.Count()
+    };
+
+// Revenue per category with one column per quarter for a given year
+var byQuarter =
+    from l in db.OrderLines
+    where l.Order.OrderDate.Year == year
+    group new { Month = l.Order.OrderDate.Month, Amount = l.Quantity * l.UnitPrice }
+        by l.Product.Category.Name into g
+    select new
+    {
+        Category = g.Key,
+        Q1 = g.Sum(x => x.Month <= 3 ? x.Amount : 0),
+        Q2 = g.Sum(x => x.Month >= 4 && x.Month <= 6 ? x.Amount : 0),
+        Q3 = g.Sum(x => x.Month >= 7 && x.Month <= 9 ? x.Amount : 0),
+        Q4 = g.Sum(x => x.Month >= 10 ? x.Amount : 0)
+    };
+
+// Method syntax (GroupBy overload with key selector + element selector)
+var q2 = db.Orders
+    .GroupBy(o => new { o.CustomerId, o.Customer.Name })
+    .Select(g => new
+    {
+        Customer = g.Key.Name,
+        Total = g.Count(),
+        Pending = g.Count(o => o.Status == OrderStatus.Pending),
+        Delivered = g.Count(o => o.Status == OrderStatus.Delivered)
+    });
+
+var byQuarter2 = db.OrderLines
+    .Where(l => l.Order.OrderDate.Year == year)
+    .GroupBy(
+        l => l.Product.Category.Name,
+        l => new { Month = l.Order.OrderDate.Month, Amount = l.Quantity * l.UnitPrice })
+    .Select(g => new
+    {
+        Category = g.Key,
+        Q1 = g.Sum(x => x.Month <= 3 ? x.Amount : 0),
+        Q2 = g.Sum(x => x.Month >= 4 && x.Month <= 6 ? x.Amount : 0),
+        Q3 = g.Sum(x => x.Month >= 7 && x.Month <= 9 ? x.Amount : 0),
+        Q4 = g.Sum(x => x.Month >= 10 ? x.Amount : 0)
+    });
+```
+
+These translate to `SUM(CASE WHEN … THEN … ELSE 0 END)`, the portable equivalent of SQL `PIVOT` (see [PIVOT and UNPIVOT](#sql-server-advanced-grouping-and-window-functions-md)). If an older provider rejects `Count(predicate)`, use `Sum(x => cond ? 1 : 0)`.
+
+---
+
+#### 17. Top N and first row per group
+
+```csharp
+// Top 3 products by revenue in each category
+var top3 =
+    from c in db.Categories
+    select new
+    {
+        Category = c.Name,
+        TopProducts = c.Products
+            .Select(p => new
+            {
+                p.Name,
+                Revenue = p.OrderLines.Sum(l => (decimal?)(l.Quantity * l.UnitPrice)) ?? 0
+            })
+            .OrderByDescending(x => x.Revenue)
+            .Take(3)
+            .ToList()
+    };
+
+// Same, method syntax
+var top3m = db.Categories.Select(c => new
+{
+    Category = c.Name,
+    TopProducts = c.Products
+        .Select(p => new
+        {
+            p.Name,
+            Revenue = p.OrderLines.Sum(l => (decimal?)(l.Quantity * l.UnitPrice)) ?? 0
+        })
+        .OrderByDescending(x => x.Revenue)
+        .Take(3)
+        .ToList()
+});
+
+// Latest order of each customer (EF Core 6+ translates with ROW_NUMBER())
+var latest = db.Orders
+    .GroupBy(o => o.CustomerId)
+    .Select(g => g.OrderByDescending(o => o.OrderDate).First());
+
+var latestQ =
+    from o in db.Orders
+    group o by o.CustomerId into g
+    select g.OrderByDescending(o => o.OrderDate).First();
+
+// Portable alternative: group to find the max, then join back
+var lastDates =
+    from o in db.Orders
+    group o by o.CustomerId into g
+    select new { CustomerId = g.Key, LastDate = g.Max(o => o.OrderDate) };
+
+var latest2 =
+    from o in db.Orders
+    join x in lastDates
+        on new { o.CustomerId, Date = o.OrderDate } equals new { x.CustomerId, Date = x.LastDate }
+    select o;          // ties on the same date return more than one row
+
+// Join-back, method syntax
+var lastDates2 = db.Orders
+    .GroupBy(o => o.CustomerId)
+    .Select(g => new { CustomerId = g.Key, LastDate = g.Max(o => o.OrderDate) });
+
+var latest3 = db.Orders.Join(
+    lastDates2,
+    o => new { o.CustomerId, Date = o.OrderDate },
+    x => new { x.CustomerId, Date = x.LastDate },
+    (o, x) => o);
+```
+
+---
+
+#### 18. Share of total (subquery inside the group)
+
+```csharp
+var q =
+    from l in db.OrderLines
+    group l by l.Product.Category.Name into g
+    let revenue = g.Sum(x => x.Quantity * x.UnitPrice)
+    select new
+    {
+        Category = g.Key,
+        Revenue = revenue,
+        SharePct = revenue * 100 / db.OrderLines.Sum(x => x.Quantity * x.UnitPrice)
+    };
+
+// Method syntax
+var q2 = db.OrderLines
+    .GroupBy(l => l.Product.Category.Name)
+    .Select(g => new { Category = g.Key, Revenue = g.Sum(x => x.Quantity * x.UnitPrice) })
+    .Select(x => new
+    {
+        x.Category,
+        x.Revenue,
+        SharePct = x.Revenue * 100 / db.OrderLines.Sum(l => l.Quantity * l.UnitPrice)
+    });
+```
+
+The grand total runs as a scalar subquery. Alternatively, fetch the total in its own query first. Guard against dividing by zero when the table can be empty.
+
+---
+
+#### 19. Group in SQL, shape in memory
+
+Nested groups (category → year → revenue) and window-style calculations (running total, rank) are not translated from ordinary LINQ. Aggregate **flat** in the database, then reshape the small result in memory:
+
+```csharp
+var flat = await db.OrderLines
+    .GroupBy(l => new { Category = l.Product.Category.Name, l.Order.OrderDate.Year })
+    .Select(g => new
+    {
+        g.Key.Category,
+        g.Key.Year,
+        Revenue = g.Sum(l => l.Quantity * l.UnitPrice)
+    })
+    .ToListAsync();                                    // SQL GROUP BY ends here
+
+// Nested grouping
+var nested = flat
+    .GroupBy(x => x.Category)
+    .Select(cg => new
+    {
+        Category = cg.Key,
+        Total = cg.Sum(x => x.Revenue),
+        Years = cg.OrderBy(x => x.Year).Select(x => new { x.Year, x.Revenue }).ToList()
+    });
+
+// Running total per category, plus rank by revenue
+var withRunning = flat
+    .GroupBy(x => x.Category)
+    .SelectMany(cg =>
+    {
+        decimal running = 0;
+        return cg.OrderBy(x => x.Year).Select(x => new
+        {
+            x.Category,
+            x.Year,
+            x.Revenue,
+            RunningTotal = running += x.Revenue
+        });
+    });
+
+var ranked = flat
+    .OrderByDescending(x => x.Revenue)
+    .Select((x, index) => new { Rank = index + 1, x.Category, x.Year, x.Revenue });
+```
+
+For large data, use SQL window functions (`SUM() OVER`, `ROW_NUMBER()`) through a view or raw SQL instead; see [window functions](#sql-server-advanced-grouping-and-window-functions-md).
+
+Related in-memory notes:
+- `GroupBy` on `IEnumerable` is **deferred**; `ToLookup` builds the groups **immediately** and supports fast key lookup (`lookup[key]`).
+- Returning raw groups from EF (`db.Orders.GroupBy(o => o.CustomerId).ToListAsync()`) is supported in newer versions only as the final operator. It fetches every row and groups during materialization, not with SQL `GROUP BY`.
+
+---
+
+#### 20. Cheat sheet
+
+| Need | Query syntax | Method syntax | SQL |
+|---|---|---|---|
+| Inner join | `join b in B on a.K equals b.K` | `A.Join(B, a => a.K, b => b.K, (a, b) => …)` | `INNER JOIN` |
+| Left join | `join … into g from b in g.DefaultIfEmpty()` | `GroupJoin` + `SelectMany(DefaultIfEmpty)`; .NET 10 `LeftJoin` | `LEFT JOIN` |
+| Right join | swap sides of a left join | .NET 10 `RightJoin` | `RIGHT JOIN` |
+| Full join | left join `Concat` right-only rows | same | `FULL OUTER JOIN` |
+| Cross join | `from a in A from b in B` | `A.SelectMany(a => B, …)` | `CROSS JOIN` |
+| Non-equi join | `from b in B.Where(b => range…)` | `SelectMany` + `Where` | `JOIN … ON a.X BETWEEN …` |
+| Semi / anti join | `where B.Any(…)` / `!B.Any(…)` | `Where(a => B.Any(…))` | `EXISTS` / `NOT EXISTS` |
+| Composite key | `on new { a.X, a.Y } equals new { b.X, b.Y }` | anonymous key selectors | `ON a.X = b.X AND a.Y = b.Y` |
+| Group | `group x by key into g` | `GroupBy(key)` | `GROUP BY` |
+| Having | `where` after `into g` | `.Where(g => …)` after `GroupBy` | `HAVING` |
+| Distinct count | `g.Select(x => x.Id).Distinct().Count()` | same | `COUNT(DISTINCT Id)` |
+| Conditional sum | `g.Sum(x => cond ? v : 0)` | same | `SUM(CASE WHEN …)` |
+
+#### 21. Viva quick answers
+
+- **Query syntax or method syntax?** They compile to the same method calls and generate the same SQL. Query syntax reads better for multi-table joins, `let`, and left joins, because the compiler carries every range variable for you. Method syntax is required for operators that have no keyword (`Count`, `Sum`, `Any`, `Take`, `Distinct`, `Concat`, `LeftJoin`), and the two styles are often mixed: `(from … select …).CountAsync()`.
+- **Why `equals` and not `==` in `join`?** `join` is an equi-join with two separate key selectors: the left expression can see only the outer variable and the right only the inner one. `equals` makes that rule explicit.
+- **Can `join` use `>` or `<`?** No. Use `from … in …Where(…)` (`SelectMany`) for ranges and inequalities.
+- **What does `into` mean?** After `join`, it creates a group join. After `group` or `select`, it is a *query continuation*: the earlier range variables go out of scope, and you continue from the new variable.
+- **How do you write a left join in LINQ?** `join … into g` + `from x in g.DefaultIfEmpty()`, or `LeftJoin` from .NET 10. Guard the right-side variable against null.
+- **How do you write right and full joins?** Right: swap the sides of a left join (or `RightJoin` from .NET 10). Full: left join `Concat` the right-only rows.
+- **Do null keys match?** In a SQL join, `NULL = NULL` is not true, and LINQ to Objects `Join` also skips null keys. `GroupBy`, however, puts all null keys into **one** group, in both SQL and LINQ.
+- **`Count()` after a left join returns 1 for "no rows". Why?** `DefaultIfEmpty` yields one null element. Use `Count(x => x != null)` or a navigation `c.Orders.Count()`.
+- **When are explicit joins needed, and when are navigations better?** Prefer navigations when the relationship is mapped: they are shorter, and EF picks the right inner/left joins. Use explicit `join` for unmapped relationships, composite or ad-hoc keys, joins to grouped subqueries, and when the interviewer asks for one.
+- **Why do joins produce duplicates?** One-to-many fan-out. Use `Any()` for existence, aggregate before joining, or `Distinct()` as a last resort.
+- **`Concat` vs `Union`?** `Concat` = `UNION ALL` (keeps duplicates, cheaper); `Union` = `UNION` (removes duplicates).
+- **Why can't you use `?.` in an EF query?** Expression trees can't contain null-propagating operators (CS8072). Use a ternary null check.
+- **Where should filtering go?** Filter rows **before** grouping (`WHERE`); filter on aggregates **after** grouping (`HAVING`). For a left join, put right-side filters **inside** the joined source, not in a later `where`.
 
 ---
 
