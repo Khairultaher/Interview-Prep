@@ -8,6 +8,7 @@ Each concept is explained once. Where several notes covered the same topic, they
 - [C# Data Types and Collections Cheat Sheet](#csharp-data-types-and-collections-cheatsheet-md)
 - [Senior C#/.NET Developer: Code Review, Refactoring & Interview Guide](#senior-csharp-code-review-refactoring-interview-guide-md)
 - [Shallow Clone vs. Deep Clone in C#](#shallow-vs-deep-clone-md)
+- [Reflection: Get a Property by Name Using `Type`](#get-property-using-type-csharp-md)
 - [Additional Questpond question sets](#additional-questpond-question-sets)
 
 ---
@@ -1740,6 +1741,70 @@ The `Address` object is explicitly created again, so changes to the cloned addre
 - Deep cloning object graphs with cycles or shared references needs care: a correct implementation may need a map of already-cloned objects to preserve relationships and avoid infinite recursion.
 
 **In short:** `MemberwiseClone()` creates a new outer object but shares referenced objects. A deep clone also creates independent copies of the nested objects that need to be independent.
+
+---
+
+<a id="get-property-using-type-csharp-md"></a>
+
+## Reflection: Get a Property by Name Using `Type`
+
+When the property name is only known at **runtime** (for example, from configuration, a sort-by query parameter, or a CSV column), use reflection. `Type.GetProperty()` returns a `PropertyInfo`, which can read or write the value.
+
+```csharp
+using System;
+using System.Reflection;
+
+public class MyClass
+{
+    public int MyProperty { get; set; }
+}
+
+public class Program
+{
+    public static void Main()
+    {
+        var obj = new MyClass { MyProperty = 42 };
+        string propertyName = "MyProperty";
+
+        Type type = obj.GetType();                                   // 1. runtime type
+        PropertyInfo? propertyInfo = type.GetProperty(propertyName); // 2. find property
+
+        if (propertyInfo is not null)
+        {
+            object? value = propertyInfo.GetValue(obj);              // 3. read value
+            Console.WriteLine($"The value of {propertyName} is: {value}");
+        }
+        else
+        {
+            Console.WriteLine($"Property '{propertyName}' was not found."); // 4. null if missing
+        }
+    }
+}
+```
+
+**How it works**
+
+1. `obj.GetType()` returns the object's runtime type.
+2. `type.GetProperty(name)` searches for a **public** property with that name. It returns `null` if none exists.
+3. `propertyInfo.GetValue(obj)` reads the value from that specific instance.
+
+**If you only have the `Type`** (no instance yet), you can find the property, but you still need an instance to read it:
+
+```csharp
+Type type = typeof(MyClass);
+PropertyInfo? propertyInfo = type.GetProperty("MyProperty");
+
+var obj = new MyClass { MyProperty = 42 };
+object? value = propertyInfo?.GetValue(obj);   // 42
+propertyInfo?.SetValue(obj, 100);              // write works the same way
+```
+
+**Interview notes**
+
+- Name matching is case-sensitive by default. For case-insensitive matching, use `type.GetProperty(name, BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase)`.
+- Reflection is **less type-safe** (typos fail at runtime, not compile time) and **slower** than direct access. In hot paths, cache the `PropertyInfo`, or compile a delegate or expression tree once and reuse it.
+- Prefer `nameof(MyClass.MyProperty)` over a hard-coded string when the name is known at compile time.
+- Reflection can break with trimming/Native AOT unless the members are preserved.
 
 ---
 
