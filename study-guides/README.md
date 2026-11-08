@@ -1,25 +1,27 @@
 # Interview Preparation Study Guides
 
-A topic-organized library compiled from the Markdown and PDF materials in `../source/`, with additional frontend, Azure DevOps/container, and Azure administration interview material from `B:\TUTS\Questpond` and `B:\TUTS\H1B`.
+This collection turns scattered interview notes into a practical path from language fundamentals to senior-level architecture and cloud discussions. Each guide explains the ideas, trade-offs, and questions most likely to come up in a real interview.
 
 ## Recommended study order
 
-1. [Study roadmap and interview strategy](00-study-roadmap.md)
-2. [C# language and code quality](01-csharp-language-and-quality.md)
-3. [Data structures and algorithms](02-data-structures-and-algorithms.md)
-4. [.NET and ASP.NET Core](03-dotnet-and-aspnetcore.md)
-5. [Web APIs, HTTP, and identity](04-web-apis-http-and-identity.md)
-6. [EF Core, LINQ, and SQL Server](05-efcore-linq-and-sql.md)
-7. [Architecture and design patterns](06-architecture-and-design-patterns.md)
-8. [Concurrency, threading, and async](07-concurrency-threading-and-async.md)
-9. [System design and distributed systems](08-system-design-and-distributed-systems.md)
-10. [Microservices, Modular Monoliths, and Distributed Systems](09.1-microservices_modular_monolith_interview_tutorial.md)
-11. [JavaScript interview questions](09-javascript-interview-questions.md)
-12. [React.js and Next.js interview questions](10-react-nextjs-interview-questions.md)
-13. [Angular interview questions](11-angular-interview-questions.md)
-14. [Azure DevOps, Docker, and Kubernetes / AKS](12-azure-devops-docker-kubernetes.md)
-15. [Azure cloud administration for backend developers](13-azure-cloud-administration-for-backend.md)
-16. [Questpond employer-specific interview questions](15-questpond-employer-interviews-and-full-pdf.md)
+Work through the guides in order, or jump to the area you need to strengthen:
+
+1. [Study roadmap and interview strategy](00-study-roadmap.md) — Start here for a realistic preparation plan, revision rhythm, and advice on presenting your experience clearly.
+2. [C# language and code quality](01-csharp-language-and-quality.md) — Reinforce the language fundamentals behind maintainable production code, including collections, generics, memory, and clean coding practices.
+3. [Data structures and algorithms](02-data-structures-and-algorithms.md) — Practise the structures, complexity analysis, sorting, searching, heaps, and problem-solving patterns used in coding rounds.
+4. [.NET and ASP.NET Core](03-dotnet-and-aspnetcore.md) — Understand the runtime and web framework topics that distinguish a confident .NET developer: DI, middleware, configuration, hosting, and performance.
+5. [Web APIs, HTTP, and identity](04-web-apis-http-and-identity.md) — Learn how to design reliable APIs and explain HTTP, REST, authentication, authorization, tokens, and security decisions.
+6. [EF Core, LINQ, and SQL Server](05-efcore-linq-and-sql.md) — Prepare for data-access questions with practical coverage of querying, tracking, relationships, transactions, indexes, and SQL performance.
+7. [Architecture and design patterns](06-architecture-and-design-patterns.md) — Build a vocabulary for discussing SOLID, layering, common patterns, and the trade-offs behind an architecture.
+8. [Concurrency, threading, and async](07-concurrency-threading-and-async.md) — Make asynchronous and concurrent code easier to reason about, from tasks and locks to cancellation and synchronization primitives.
+9. [System design and distributed systems](08-system-design-and-distributed-systems.md) — Work through the decisions behind scalable systems: consistency, caching, messaging, resilience, observability, and failure handling.
+10. [Microservices, modular monoliths, and distributed systems](09.1-microservices_modular_monolith_interview_tutorial.md) — Compare service boundaries and modular designs so you can explain when complexity is justified and when it is not.
+11. [JavaScript interview questions](09-javascript-interview-questions.md) — Review the language and browser concepts that frequently appear alongside backend and full-stack interviews.
+12. [React.js and Next.js interview questions](10-react-nextjs-interview-questions.md) — Prepare for component design, rendering, state, data fetching, and the practical trade-offs of modern React applications.
+13. [Angular interview questions](11-angular-interview-questions.md) — Cover Angular architecture, components, services, RxJS, forms, routing, and the patterns used in enterprise frontends.
+14. [Azure DevOps, Docker, and Kubernetes / AKS](12-azure-devops-docker-kubernetes.md) — Connect application delivery to the platform: containers, pipelines, deployments, orchestration, and operational concerns.
+15. [Azure cloud administration for backend developers](13-azure-cloud-administration-for-backend.md) — Get a developer-friendly overview of Azure networking, identity, compute, storage, monitoring, and day-to-day administration.
+16. [Questpond employer-specific interview questions](15-questpond-employer-interviews-and-full-pdf.md) — Finish with a broad question bank that connects common employer-style questions to the focused explanations in the other guides.
 
 ## How duplicates are handled
 
@@ -31,7 +33,7 @@ A topic-organized library compiled from the Markdown and PDF materials in `../so
 - **HTTP headers** live in guide 04. Two header guides were merged into one.
 - **EF Core** has one main guide in 05. The four overlapping EF Core notes were folded into it, and only the questions not covered there were kept.
 - **Async, threads, and locking** (`lock`, `Monitor`, `SemaphoreSlim`, `ConfigureAwait`) live in guide 07. **Distributed jobs, distributed locks, and resilience** live in guide 08.
-- **Questpond `RealTimeInterviewQuestions.pdf`**: its raw page-by-page text is no longer copied. Every question in it is answered in the employer notes (guide 15) or in the matching topic guide. The original PDF is still at `B:\TUTS\Questpond\RealTimeInterviewQuestions.pdf`.
+- **Questpond interview material**: raw page-by-page text is no longer copied. Every question is answered in the employer notes (guide 15) or in the matching topic guide, keeping the content searchable and easier to revise.
 
 Chat transcript labels ("You said", "ChatGPT said") and import labels have been removed. The explanations keep their original simple, friendly tone. The raw sources in `../source/` are unchanged.
 
@@ -43,64 +45,28 @@ Chat transcript labels ("You said", "ChatGPT said") and import labels have been 
 
 ### [C# Language and Code Quality](01-csharp-language-and-quality.md)
 
-- `B:\TUTS\Questpond\01-oop-solid.md`
-- `B:\TUTS\Questpond\02-csharp.md`
-- `modern-csharp-senior-architect-interview-guide.md`
-- `csharp_data_types_and_collections_cheatsheet.md`
-- `senior_csharp_code_review_refactoring_interview_guide.md`
-- `shallow-vs-deep-clone.md`
-- `get-property-using-type-csharp.md`
+Core C# concepts, collections, generics, and code-quality guidance are consolidated here.
 
 ### [Data Structures and Algorithms](02-data-structures-and-algorithms.md)
 
-- `B:\TUTS\Questpond\10-scenario-based.md`
-- `B:\TUTS\Questpond\12-coding-questions.md`
-- `csharp-data-structures-sorting-interview-cheatsheet.md`
-- `algorithmic_techniques_guide.md`
-- `C# Data Structures Guide.pdf`
+Interview-ready explanations of common data structures, algorithms, and complexity trade-offs.
 
 ### [.NET and ASP.NET Core](03-dotnet-and-aspnetcore.md)
 
-- `aspnetcore_middleware_filters_dotnet8_9.md`
-- `NET middleware for senior devs (1).pdf`
-- `NET middleware for senior devs.pdf`
-- `Middleware vs Action Filters.pdf`
-- `aspnet_core_performance_checklist_and_mcqs.md`
-- `dotnet-dependency-injection-guide.md`
-- `dotnet-dependency-injection-senior-architect-guide.md`
-- `dotnet-dependency-injection-through-net-10.md`
-- `IIS_Kestrel_Senior_DotNet_Viva.md`
-- `signalr_dotnet8_viva_guide.md`
+Runtime, dependency injection, middleware, configuration, hosting, and ASP.NET Core fundamentals.
 
 ### [Web APIs, HTTP, and Identity](04-web-apis-http-and-identity.md)
 
-- `B:\TUTS\Questpond\05-dotnet-core-web-api.md`
-- `B:\TUTS\Questpond\11-api-testing.md`
-- `csharp-aspnetcore-rest-api-notes.md`
-- `dotnet8-rest-api-viva-notes.md`
-- `senior_dotnet_interview_guide.md` (HTTP/API MCQs, standards, tests, and scenarios)
-- `common-http-headers.md`
-- `http-headers-dotnet-viva.md`
-- `senior_dotnet_storage_session_jwt_viva.md`
+API design, HTTP behavior, authentication, authorization, and identity concepts.
 
 ### [EF Core, LINQ, and SQL Server](05-efcore-linq-and-sql.md)
 
-- `B:\TUTS\Questpond\06-orm.md`
-- `B:\TUTS\Questpond\08-sql.md`
-- `B:\TUTS\Questpond\11-sql-scenarios.md`
-- `ef_core_linq_senior_interview_guide.md`
-- `EF_Core_Viva_Preparation.md`
-- `ef-core-linq-optimization-senior-viva-guide.md`
-- `ef-core-performance-interview-and-benchmark-lab.md`
-- `senior_dotnet_linq_efcore_viva.md`
-- `sql_server_advanced_grouping_and_window_functions.md`
+Querying, persistence, database design, transactions, and performance-focused data access.
 
 ### [Architecture and Design Patterns](06-architecture-and-design-patterns.md)
 
-- `B:\TUTS\Questpond\09-design-pattern-architecture.md`
-- `23-design-patterns-csharp-senior-viva.md`
-- `clean-architecture-cqrs-vs-mvc-dotnet8.md`
-- `senior_dotnet_architect_viva_prep.md`
+Design principles and patterns for communicating maintainable architecture choices.
+
 
 ### [Concurrency, Threading, and Async](07-concurrency-threading-and-async.md)
 
@@ -113,75 +79,28 @@ Chat transcript labels ("You said", "ChatGPT said") and import labels have been 
 
 ### [System Design and Distributed Systems](08-system-design-and-distributed-systems.md)
 
-- `B:\TUTS\Questpond\10-scenario-based-interview-questions.md`
-- `high-traffic-dotnet-api-blueprint.md`
-- `saga-pattern-dotnet.md`
-- `async-messaging-dotnet-viva-guide.md`
-- `senior_dotnet_async_locking_distributed_guide.md` (distributed part; the async/locking part is in guide 07)
+Scalability, reliability, messaging, caching, consistency, and operational design.
 
 ### [JavaScript Interview Questions](09-javascript-interview-questions.md)
 
-- `B:\TUTS\Questpond\03-javascript.md`
-- JavaScript output questions from `B:\TUTS\Questpond\RealTimeInterviewQuestions.pdf` and the Virtusa interview notes
+The JavaScript concepts most useful for full-stack and frontend interview discussions.
 
 ### [React.js and Next.js Interview Questions](10-react-nextjs-interview-questions.md)
 
-- React questions from `B:\TUTS\Questpond\RealTimeInterviewQuestions.pdf`
-- `B:\TUTS\Questpond\30-virtusa.md`
-- React performance question from `B:\TUTS\Questpond\02-csharp.md`
-- React caching question from `B:\TUTS\Questpond\05-dotnet-core-web-api.md`
-- No Next.js-specific questions were present in the Questpond materials
+Modern React and Next.js concepts, from components and state to rendering and data fetching.
 
 ### [Angular Interview Questions](11-angular-interview-questions.md)
 
-- `B:\TUTS\Questpond\04-angular.md`
+Enterprise Angular concepts including components, services, forms, routing, and RxJS.
 
 ### [Azure DevOps, Docker, and Kubernetes / AKS](12-azure-devops-docker-kubernetes.md)
 
-- `B:\TUTS\Questpond\07-azure.md`
-- `B:\TUTS\Questpond\20-epam.md`
-- `B:\TUTS\Questpond\30-virtusa.md`
-- `B:\TUTS\Questpond\30-wolters.md`
-- `B:\TUTS\Questpond\RealTimeInterviewQuestions.pdf`
-- `B:\TUTS\Interview Prep\source\senior_dotnet_architect_viva_prep.md`
+Delivery pipelines, containers, Kubernetes, AKS, and the operational details behind deployments.
 
 ### [Azure Cloud Administration for Backend Developers](13-azure-cloud-administration-for-backend.md)
 
-- `B:\TUTS\Questpond\07-azure.md`
-- `B:\TUTS\Questpond\13-azure-interview-questions.md`
-- `B:\TUTS\H1B\Backend-Development-Viva-Preparation.md` (backend topics used for context; it does not enumerate Azure services)
-- Supplementary Azure identity, networking, compute, data, messaging, governance, monitoring, and security service guide
+An accessible tour of the Azure services and administration topics backend developers encounter.
 
 ### [Questpond Employer-Specific Interview Questions](15-questpond-employer-interviews-and-full-pdf.md)
 
-All employer-specific Questpond interview notes, with short answers. The raw text of `RealTimeInterviewQuestions.pdf` is not repeated here because its questions are answered in this guide or the topic guides.
-
-- `B:\TUTS\Questpond\14-globallogic-interview-questions.md`
-- `B:\TUTS\Questpond\20-accenture-first-round.md`
-- `B:\TUTS\Questpond\20-capgemini-azure-lead.md`
-- `B:\TUTS\Questpond\20-capgemini.md`
-- `B:\TUTS\Questpond\20-carelon.md`
-- `B:\TUTS\Questpond\20-cognizant.md`
-- `B:\TUTS\Questpond\20-deloitte.md`
-- `B:\TUTS\Questpond\20-epam.md`
-- `B:\TUTS\Questpond\20-globaldata.md`
-- `B:\TUTS\Questpond\20-lti-mindtree.md`
-- `B:\TUTS\Questpond\20-mphasis.md`
-- `B:\TUTS\Questpond\20-persistent-architect.md`
-- `B:\TUTS\Questpond\20-persistent-azure-dotnet.md`
-- `B:\TUTS\Questpond\20-verisk.md`
-- `B:\TUTS\Questpond\30-fn-lastletteralphabet.md`
-- `B:\TUTS\Questpond\30-infosys.md`
-- `B:\TUTS\Questpond\30-tcs.md`
-- `B:\TUTS\Questpond\30-virtusa.md`
-- `B:\TUTS\Questpond\30-wipro.md`
-- `B:\TUTS\Questpond\30-wolters.md`
-- `B:\TUTS\Questpond\RealTimeInterviewQuestions.pdf`
-
-### Exact duplicates omitted
-
-- `23-design-patterns-csharp-senior-viva (1).md`
-- `f.pdf`
-- `NET middleware for senior devs (2).pdf`
-- `NET middleware for senior devs (3).pdf`
-- `NET middleware for senior devs (4).pdf`
+A broad final question bank that points back to the focused topic guides for deeper revision.
