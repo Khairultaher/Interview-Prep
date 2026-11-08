@@ -23,20 +23,6 @@ Work through the guides in order, or jump to the area you need to strengthen:
 15. [Azure cloud administration for backend developers](13-azure-cloud-administration-for-backend.md) — Get a developer-friendly overview of Azure networking, identity, compute, storage, monitoring, and day-to-day administration.
 16. [Questpond employer-specific interview questions](15-questpond-employer-interviews-and-full-pdf.md) — Finish with a broad question bank that connects common employer-style questions to the focused explanations in the other guides.
 
-## How duplicates are handled
-
-**Each concept is explained once.** When several source notes covered the same topic, their unique details were merged into one section, and the repeated explanations were removed. When a topic belongs to another guide, a link points there instead of repeating it. For example:
-
-- **Middleware** (`Use`/`Run`/`Map`, ordering, middleware vs filters) lives in guide 03. The three near-identical ChatGPT middleware transcripts were merged into one "Extra Senior Notes" section.
-- **Dependency injection** lives in guide 03. The three DI guides were merged into one section.
-- **Collections** (`List`, `Dictionary`, `Stack`, `Queue`, sets) live in guide 01. **Sorting, comparers, heaps, and `PriorityQueue`** live in guide 02.
-- **HTTP headers** live in guide 04. Two header guides were merged into one.
-- **EF Core** has one main guide in 05. The four overlapping EF Core notes were folded into it, and only the questions not covered there were kept.
-- **Async, threads, and locking** (`lock`, `Monitor`, `SemaphoreSlim`, `ConfigureAwait`) live in guide 07. **Distributed jobs, distributed locks, and resilience** live in guide 08.
-- **Questpond interview material**: raw page-by-page text is no longer copied. Every question is answered in the employer notes (guide 15) or in the matching topic guide, keeping the content searchable and easier to revise.
-
-Chat transcript labels ("You said", "ChatGPT said") and import labels have been removed. The explanations keep their original simple, friendly tone. The raw sources in `../source/` are unchanged.
-
 ## Source coverage
 
 ### [Study Roadmap and Interview Strategy](00-study-roadmap.md)
