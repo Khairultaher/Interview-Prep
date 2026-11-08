@@ -41,7 +41,7 @@ Chat transcript labels ("You said", "ChatGPT said") and import labels have been 
 
 ### [Study Roadmap and Interview Strategy](00-study-roadmap.md)
 
-- `senior_dotnet_refined_roadmap.md`
+The starting point for planning your preparation, prioritizing topics, and building an effective revision routine.
 
 ### [C# Language and Code Quality](01-csharp-language-and-quality.md)
 
@@ -70,12 +70,7 @@ Design principles and patterns for communicating maintainable architecture choic
 
 ### [Concurrency, Threading, and Async](07-concurrency-threading-and-async.md)
 
-- `csharp-concurrency-span-stack-queue.md`
-- `dotnet-synchronization-primitives.md` (merged into the synchronization primitives section)
-- `csharp-task-parallelism-interview-notes.md`
-- `dotnet-threading-async-await-senior-viva.md`
-- `senior_dotnet_async_locking_distributed_guide.md` (async/locking part)
-- `senior_dotnet_architect_viva_prep.md` (async internals and `ConfigureAwait`)
+Task parallelism, synchronization primitives, threading, async/await, locking, and `ConfigureAwait` are brought together here for focused revision.
 
 ### [System Design and Distributed Systems](08-system-design-and-distributed-systems.md)
 
