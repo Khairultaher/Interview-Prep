@@ -1,0 +1,9 @@
+%%{init: {"theme": "base", "themeVariables": {"fontSize": "18px", "primaryColor": "#dbeafe", "primaryTextColor": "#000000", "primaryBorderColor": "#4b6a9b", "secondaryColor": "#dcfce7", "secondaryTextColor": "#000000", "secondaryBorderColor": "#4b8a5f", "tertiaryColor": "#fef3c7", "tertiaryTextColor": "#000000", "tertiaryBorderColor": "#a8853a", "lineColor": "#8a94a3", "textColor": "#000000", "titleColor": "#000000", "classText": "#000000", "nodeTextColor": "#000000", "clusterBkg": "#f1f5f9", "clusterBorder": "#8a94a3", "edgeLabelBackground": "#ffffff", "noteBkgColor": "#fef3c7", "noteTextColor": "#000000", "noteBorderColor": "#a8853a", "actorBkg": "#dbeafe", "actorTextColor": "#000000", "actorBorder": "#4b6a9b", "actorLineColor": "#8a94a3", "signalColor": "#5f6b7a", "signalTextColor": "#000000", "labelBoxBkgColor": "#dbeafe", "labelTextColor": "#000000", "loopTextColor": "#000000", "labelBoxBorderColor": "#4b6a9b", "transitionLabelColor": "#000000", "stateLabelColor": "#000000", "cScale0": "#dbeafe", "cScaleLabel0": "#000000", "cScale1": "#dcfce7", "cScaleLabel1": "#000000", "cScale2": "#fef3c7", "cScaleLabel2": "#000000", "cScale3": "#fce7f3", "cScaleLabel3": "#000000", "cScale4": "#ede9fe", "cScaleLabel4": "#000000", "cScale5": "#ccfbf1", "cScaleLabel5": "#000000"}, "sequence": {"messageFontSize": 18, "actorFontSize": 18, "noteFontSize": 17}}}%%
+flowchart TD
+    C[Client] --> G[API Gateway]
+    G --> B[Basket Lambda]
+    B --> D1[(DynamoDB)]
+    B -- "CheckoutBasket event" --> E[EventBridge]
+    E --> Q[(SQS queue)]
+    Q -- "poll in batches" --> O[Ordering Lambda]
+    O --> D2[(DynamoDB)]
