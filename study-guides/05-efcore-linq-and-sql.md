@@ -9,6 +9,7 @@ Each concept is explained once. Where several notes covered the same topic, they
 - [EF Core Viva — More Quick Questions](#ef-core-viva-preparation-md)
 - [EF Core Performance: Hands-On Benchmark Lab](#ef-core-performance-interview-and-benchmark-lab-md)
 - [SQL Server: Grouping, PIVOT/UNPIVOT, and Window Functions](#sql-server-advanced-grouping-and-window-functions-md)
+- [Database Indexing and Transaction Isolation: An Engine-Agnostic Guide](#database-indexing-and-isolation)
 - [Additional Questpond question sets](#additional-questpond-question-sets)
 
 ---
@@ -3845,6 +3846,211 @@ The explicit full frame is important: without it, `LAST_VALUE` commonly returns 
 
 ---
 
+<a id="database-indexing-and-isolation"></a>
+
+## Database Indexing and Transaction Isolation: An Engine-Agnostic Guide
+
+*Source: "Indexing, Partitioning, Sharding & Transaction Isolation — A Database-Agnostic System Design Guide" (Parts 1 and 4). Partitioning, sharding, quorums, and distributed transactions are in [08 — Partitioning, Sharding, and Distributed Data](08-system-design-and-distributed-systems.md#partitioning-sharding-distributed-data). SQL Server specifics (clustered vs nonclustered, execution plans) are in the Questpond SQL section at the end of this guide; EF Core isolation and concurrency are in section 4.4 of the EF Core guide above.*
+
+### The mental model
+
+Every scaling topic answers: *"there is too much data, load, or concurrency for X to handle alone — what do we split and what do we trade away?"*
+
+```text
+X = one query        → INDEXING      (do less work per query)
+X = one table/store  → PARTITIONING  (do less work per logical dataset)
+X = one node         → SHARDING      (do less work per node)
+X = one transaction  → ISOLATION     (do less coordination between concurrent operations)
+```
+
+**Escalation order:** right index → query/schema fix → cache → read replica → partition → shard. Sharding is where you *arrive*, not where you start.
+
+The **RUM conjecture** explains why no index structure wins universally: a design can optimize at most two of **R**ead, **U**pdate (write), and **M**emory (space) amplification; improving one costs another.
+
+### What an index is
+
+A secondary data structure mapping a search key to a row location, maintained automatically. Every index trades **faster matching reads** for **slower writes, extra storage, and extra I/O**. The right question is not "should this be indexed?" but "is this access pattern hot enough, and the read/write ratio favorable enough, to pay on every write?"
+
+### Index structure families
+
+| Family | Optimized for | How it works | Used by |
+|---|---|---|---|
+| **B-Tree** | Reads, equality, ranges, `ORDER BY … LIMIT` | Shallow high-fanout tree, sorted linked leaves; writes modify pages in place (random I/O, page splits) | SQL Server, PostgreSQL, MySQL/InnoDB, Oracle, MongoDB defaults |
+| **LSM-Tree** | Write throughput | Writes go to an in-memory memtable, flush to immutable sorted files (SSTables), background compaction merges them; Bloom filters skip files on reads | Cassandra, ScyllaDB, HBase, RocksDB |
+| **Hash** | Pure equality, O(1) | Key hash → bucket; no ordering, no ranges | Redis/Memcached, partition-key lookup in DynamoDB/Cassandra |
+| **Inverted** | Full-text, "contains" | token → list of documents/rows | Elasticsearch/Lucene, PostgreSQL GIN |
+| **Bitmap** | Low-cardinality analytics | One bit per row per value; filters become bitwise AND/OR | Warehouses (Oracle bitmap) |
+| **R-Tree / GiST** | Spatial, nearest-neighbor | Bounding-box hierarchy | PostGIS, spatial indexes |
+| **Block-range / zone map** | Huge naturally ordered data | Min/max per block, tiny footprint | PostgreSQL BRIN, Snowflake, Redshift |
+
+B-Trees favor reads and ranges; LSM-Trees favor appends and pay with read amplification and **compaction write amplification** (the same data is rewritten as levels merge).
+
+### Composite index design method
+
+For a B-Tree-style index in any engine:
+
+1. List the columns used with **equality** (`=`).
+2. Pick the **one** column used for a range (`<`, `>`, `BETWEEN`) or `ORDER BY`.
+3. Index key = `(equality columns…, then the single range/sort column)`.
+4. Columns only needed in the result go in as covering/`INCLUDE` columns.
+
+```sql
+-- WHERE tenant_id = ? AND status = ? AND created_at > ?
+-- ORDER BY created_at DESC  LIMIT 50   SELECT id, total
+CREATE INDEX IX_Orders_Tenant_Status_Created
+  ON Orders (TenantId, Status, CreatedAt DESC)
+  INCLUDE (Total);                     -- SQL Server / PostgreSQL syntax
+```
+
+Equality columns narrow the search to a contiguous slice; the trailing column is already sorted within that slice, so the engine seeks to the start and reads forward without an in-memory sort. Only **one** range/sort predicate can be absorbed; a second range degrades to a post-filter.
+
+### Column order is load-bearing for key columns
+
+**Leftmost-prefix rule.** An index on `(a, b, c)` is sorted by `a`, then `b` within `a`, then `c` within `(a, b)`. It can *seek* on `a`, `(a, b)`, or `(a, b, c)` but not on `b`, `c`, or `(b, c)` alone.
+
+```text
+Q1: WHERE a = ? AND b = ?     → served by (a, b, c)
+Q2: WHERE b = ? AND c = ?     → NOT served: no leading a. Needs an index starting with b.
+```
+
+Among equality-only columns any order satisfies a full-equality query, but choose deliberately:
+
+1. **Prefix reusability** — put the column most often queried alone first (`(tenant_id, status)` also serves `WHERE tenant_id = ?`; `(status, tenant_id)` does not).
+2. **Selectivity** — a highly selective leading column narrows fastest and improves estimates (a performance concern, not correctness).
+3. **Non-negotiable:** the range/sort column goes **last**. Columns after a range predicate lose their sorted grouping.
+
+**Sort direction is part of order.** `ORDER BY created_at DESC, id ASC` needs an index declared `(created_at DESC, id ASC)` or the engine still sorts.
+
+**INCLUDE columns are payload.** They are never used to seek, filter, or sort, so their order is irrelevant; choose them carefully (each adds storage and write cost) but do not agonize over sequence.
+
+### Covering, partial, and filtered indexes
+
+- **Covering index:** contains every column the query needs, so the base row is never fetched (SQL Server `INCLUDE`, PostgreSQL index-only scans). Avoids key lookups.
+- **Partial / filtered index:** indexes only rows matching a predicate (`WHERE status = 'active'`) — a compact index over a hot subset without physically splitting the table.
+
+### The hidden cost: write amplification
+
+```text
+2,000 writes/sec × 11 indexes ≈ up to 22,000 index-entry writes/sec
+```
+
+More random page writes and lock contention in B-Tree engines; more entries to flush and compact in LSM engines; more replicated index traffic in distributed stores. Indexes accumulate one at a time until write latency degrades for reasons no single index explains.
+
+**Checklist before adding an index:**
+
+1. Is the access pattern hot enough to matter? Measure.
+2. Does an existing index serve it via a shared prefix?
+3. Composite, partial/filtered, or covering — which shape matches the query?
+4. What is the write rate, and what does one more index cost per write?
+5. Can it be built online/concurrently without blocking production?
+6. After release, check usage stats and drop unused indexes.
+
+### Transaction isolation: anomalies
+
+| Phenomenon | Definition | Example |
+|---|---|---|
+| **Dirty read** | Reading another transaction's uncommitted change | Balance update later rolled back |
+| **Non-repeatable read** | Re-reading the same row gives a different value | Price changed by a commit between two reads |
+| **Phantom read** | Re-running a query returns a different *set* of rows | `COUNT` goes 10 → 12 within one transaction |
+| **Lost update** | Two read-modify-write transactions; one overwrites the other | Two "read balance, subtract 100, write" operations race |
+| **Write skew** | Two transactions read overlapping data, write *different* rows, and break a cross-row invariant | Two on-call staff each see the other covering and both go off-call |
+
+### ANSI isolation levels
+
+| Level | Dirty read | Non-repeatable | Phantom | Write skew |
+|---|:---:|:---:|:---:|:---:|
+| Read Uncommitted | possible | possible | possible | possible |
+| Read Committed | prevented | possible | possible | possible |
+| Repeatable Read | prevented | prevented | prevented (by the standard) | possible |
+| Serializable | prevented | prevented | prevented | prevented |
+
+That table is the **specification**; engines deliver different things under the same name:
+
+| Engine | Default | Divergence |
+|---|---|---|
+| SQL Server | Read Committed | Adds non-standard **Snapshot** isolation (MVCC); `READ_COMMITTED_SNAPSHOT` makes Read Committed use row versioning |
+| PostgreSQL | Read Committed | Repeatable Read is snapshot isolation (no phantoms, but write skew possible); Serializable uses SSI (snapshot + dependency-cycle detection) |
+| MySQL/InnoDB | Repeatable Read | Gap locks also prevent phantoms for locking reads |
+| Oracle | Read Committed | No Read Uncommitted; Serializable is multiversion-based |
+| Many NoSQL/distributed stores | varies | Use consistency models instead of ANSI levels |
+
+**Never assume "Repeatable Read" or "Serializable" means the same guarantee across products; check the engine's documentation.**
+
+### How isolation is implemented
+
+- **Pessimistic locking (2PL):** acquire locks before reading/writing and block conflicts. Simple to reason about; lower concurrency; deadlocks possible.
+- **MVCC:** keep multiple row versions so readers see a snapshot without blocking writers (and vice versa). High read concurrency; old versions must be garbage-collected (PostgreSQL `VACUUM`, SQL Server version store/tempdb).
+- **Optimistic concurrency control (OCC):** read without locks; at commit check that nothing changed (version/`rowversion` column) and retry on conflict. Great when conflicts are rare, wasteful when frequent. This is EF Core's `[ConcurrencyCheck]`/`rowversion` model.
+
+### Beyond ANSI: distributed consistency models
+
+Once data is replicated or sharded, isolation is not the whole story; you also need a *consistency model* for what a reader sees relative to writes elsewhere.
+
+| Model | Guarantee | Cost | Examples |
+|---|---|---|---|
+| **Linearizability / strict serializability** | Reads always reflect the latest committed write, globally | Highest coordination (consensus per op) | Spanner, CockroachDB, etcd |
+| **Causal consistency** | If B depended on A, every replica shows A before B | Much cheaper; avoids "effect before cause" | Some multi-region session stores |
+| **Eventual consistency** | Replicas converge if writes stop; no ordering in between | Cheapest, most available | DNS, Cassandra at low consistency, DynamoDB eventual reads |
+| **Tunable** | Chosen per operation via quorum settings (R/W/N) | Flexible | Cassandra, DynamoDB, MongoDB read/write concerns |
+
+CAP says that under a network partition you choose availability or consistency; PACELC adds that *even without a partition* you trade latency for consistency on every operation.
+
+### What strong isolation costs
+
+Published PostgreSQL SSI results: roughly 5–20% throughput overhead versus plain snapshot isolation, and meaningfully better than classic two-phase locking on read-heavy workloads. The real cost is **aborts**: the strongest levels can abort a transaction that looks fine in isolation because of a concurrent conflict.
+
+> **Any code path run at the strongest level must be written to retry the *entire* operation from the start** on a serialization failure (SQLSTATE `40001`, SQL Server error 1205 for deadlock victims, or an OCC version mismatch). In EF Core, wrap the whole unit of work in an execution strategy, not just the failing statement.
+
+### Choosing a level
+
+```text
+Does correctness depend on an invariant spanning MULTIPLE records or operations?
+ ├─ YES → Serializable, or explicit locking on exactly the rows the invariant depends on
+ └─ NO (single-record read-modify-write)
+       ├─ Prefer ONE atomic conditional write over read-then-write:
+       │     UPDATE Accounts SET Balance = Balance - 100
+       │     WHERE Id = @id AND Balance >= 100
+       │   (or compare-and-swap / conditional put in a KV store)
+       └─ Otherwise Read Committed is fine for most CRUD and reporting
+```
+
+| System | Typical choice | Why |
+|---|---|---|
+| Ledger / double-entry | Serializable, or explicit locks in a fixed order | Debits = credits across records |
+| Seat / room / inventory booking | Serializable, or an exclusion/unique constraint | Write skew is exactly "two people book the same slot" |
+| Job queue | Default isolation + atomic claim (conditional update, `SKIP LOCKED`/`READPAST`) | Need is "one worker per job," not a cross-row invariant |
+| Analytics / reporting | Read Committed or eventual reads | Slight staleness acceptable |
+| General CRUD API | Read Committed (or snapshot) | Matches framework assumptions |
+| Multi-region app | Causal/eventual for most reads; strong only where needed ("did my write land") | Global linearizability is rarely needed |
+
+Always **lock multiple rows in the same order everywhere** (for example, ascending key) to avoid deadlocks.
+
+### Isolation is harder once you shard
+
+A single node gives you its strongest isolation "for free" (one log, one snapshot source, one lock manager). Across shards each node has its own snapshot, log, and clock, so no one node sees a conflict cycle spanning shards. You need 2PC for atomicity plus a global ordering mechanism (synchronized/hybrid clocks, as distributed-SQL platforms do) — **or choose the shard key so cross-shard transactions are rare to never needed.** The cheapest strong guarantee is a good shard key (see [08](08-system-design-and-distributed-systems.md#partitioning-sharding-distributed-data)).
+
+### Interview Q&A
+
+**Q: Index `(a, b, c)` — which queries can it serve?**
+Seeks on `a`, `(a, b)`, `(a, b, c)`. Filtering only on `b` or `c` cannot seek. Equality columns first, one range/sort column last.
+
+**Q: Why not index every column?**
+Every index multiplies write work and storage; unused indexes cost writes for no read benefit. Measure access patterns, share prefixes, and drop unused indexes.
+
+**Q: B-Tree vs LSM-Tree?**
+B-Tree: read-heavy and range workloads, in-place page updates. LSM: write-heavy/append workloads, sequential writes, paid for with read amplification and compaction.
+
+**Q: What is write skew and which levels prevent it?**
+Two transactions read overlapping data and write different rows, breaking a cross-row invariant. Only Serializable (or explicit locking/constraints) prevents it; snapshot/Repeatable Read alone does not.
+
+**Q: How do you avoid a lost update?**
+A single atomic conditional `UPDATE`, optimistic concurrency with a version column, or locking reads — not read-then-write in application code.
+
+**Q: What must application code do at Serializable?**
+Retry the whole transaction on serialization failure.
+
+---
+
 ## Additional Questpond question sets
 
 ### ORM
@@ -3981,7 +4187,7 @@ The explicit full frame is important: without it, `LAST_VALUE` commonly returns 
 **Answer:** In SQL Server, `NOLOCK` is equivalent to `READ UNCOMMITTED` for a table reference. It can return dirty, missing, or duplicated rows and does not eliminate all blocking; use row-versioning isolation (such as RCSI) or a different design when appropriate rather than treating it as a harmless performance switch.
 
 ###### 25. What is an isolation level? (PDF p. 12)
-**Answer:** An isolation level controls how concurrent transactions may observe each other's changes and which anomalies are possible. SQL Server options include Read Uncommitted, Read Committed, Repeatable Read, Snapshot, and Serializable; stronger isolation can reduce anomalies but increase contention or version-store use.
+**Answer:** An isolation level controls how concurrent transactions may observe each other's changes and which anomalies are possible (see the [engine-agnostic anomaly and isolation tables](#database-indexing-and-isolation)). SQL Server options include Read Uncommitted, Read Committed, Repeatable Read, Snapshot, and Serializable; stronger isolation can reduce anomalies but increase contention or version-store use.
 
 ###### 26. What is a transaction and how do you implement it? (PDF p. 12)
 **Answer:** A transaction groups operations into a unit with atomicity and consistency expectations, isolated according to its configured level and committed durably on success. Use `BEGIN TRANSACTION`, `COMMIT`, and `ROLLBACK` (or client transaction APIs), handle errors, and keep the transaction scope short.

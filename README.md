@@ -8,6 +8,8 @@ Work through the guides in order, or jump to the area you need to strengthen:
 
 1. [Study roadmap and interview strategy](https://github.com/Khairultaher/Interview-Prep/blob/main/study-guides/00-study-roadmap.md) — Start here for a realistic preparation plan, revision rhythm, and advice on presenting your experience clearly.
 2. [C# language and code quality](https://github.com/Khairultaher/Interview-Prep/blob/main/study-guides/01-csharp-language-and-quality.md) — Reinforce the language fundamentals behind maintainable production code, including collections, generics, memory, and clean coding practices.
+   - [Delegates, events, domain events, and integration events](https://github.com/Khairultaher/Interview-Prep/blob/main/study-guides/01.1-csharp-delegates-events-domain-and-integration-events.md) — a standalone tutorial from delegates to the Outbox pattern.
+   - [Pragmatic clean code (condensed)](https://github.com/Khairultaher/Interview-Prep/blob/main/study-guides/01.2-pragmatic-clean-code.md) — a shortened standalone copy of the clean-code book.
 3. [Data structures and algorithms](https://github.com/Khairultaher/Interview-Prep/blob/main/study-guides/02-data-structures-and-algorithms.md) — Practise the structures, complexity analysis, sorting, searching, heaps, and problem-solving patterns used in coding rounds.
 4. [.NET and ASP.NET Core](https://github.com/Khairultaher/Interview-Prep/blob/main/study-guides/03-dotnet-and-aspnetcore.md) — Understand the runtime and web framework topics that distinguish a confident .NET developer: DI, middleware, configuration, hosting, and performance.
 5. [Web APIs, HTTP, and identity](https://github.com/Khairultaher/Interview-Prep/blob/main/study-guides/04-web-apis-http-and-identity.md) — Learn how to design reliable APIs and explain HTTP, REST, authentication, authorization, tokens, and security decisions.
@@ -33,6 +35,14 @@ The starting point for planning your preparation, prioritizing topics, and build
 
 Core C# concepts, collections, generics, and code-quality guidance are consolidated here.
 
+### [Delegates, Events, Domain Events, and Integration Events](https://github.com/Khairultaher/Interview-Prep/blob/main/study-guides/01.1-csharp-delegates-events-domain-and-integration-events.md)
+
+A standalone tutorial that builds from delegates and `event` through async handlers to DDD domain events, integration events, the Outbox pattern, and idempotency.
+
+### [Pragmatic Clean Code (Condensed)](https://github.com/Khairultaher/Interview-Prep/blob/main/study-guides/01.2-pragmatic-clean-code.md)
+
+A standalone, shortened study copy of the clean-code book: names, methods, formatting, SOLID, static dependencies, class design, coupling and cohesion, comments, and testable code.
+
 ### [Data Structures and Algorithms](https://github.com/Khairultaher/Interview-Prep/blob/main/study-guides/02-data-structures-and-algorithms.md)
 
 Interview-ready explanations of common data structures, algorithms, and complexity trade-offs.
@@ -47,7 +57,7 @@ API design, HTTP behavior, authentication, authorization, and identity concepts.
 
 ### [EF Core, LINQ, and SQL Server](https://github.com/Khairultaher/Interview-Prep/blob/main/study-guides/05-efcore-linq-and-sql.md)
 
-Querying, persistence, database design, transactions, and performance-focused data access.
+Querying, persistence, database design, indexing (B-Tree vs LSM, composite-index design), transaction isolation and consistency models, and performance-focused data access.
 
 ### [Architecture and Design Patterns](https://github.com/Khairultaher/Interview-Prep/blob/main/study-guides/06-architecture-and-design-patterns.md)
 
@@ -60,7 +70,7 @@ Task parallelism, synchronization primitives, threading, async/await, locking, a
 
 ### [System Design and Distributed Systems](https://github.com/Khairultaher/Interview-Prep/blob/main/study-guides/08-system-design-and-distributed-systems.md)
 
-Scalability, reliability, messaging, caching, consistency, and operational design.
+Scalability, reliability, messaging, caching, consistency, and operational design, including partitioning, sharding, distributed-transaction patterns (2PC, Saga, TCC), and quorums.
 
 ### [JavaScript Interview Questions](https://github.com/Khairultaher/Interview-Prep/blob/main/study-guides/09-javascript-interview-questions.md)
 

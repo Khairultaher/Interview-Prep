@@ -9,6 +9,8 @@ Each concept is explained once. Where several notes covered the same topic, they
 - [Senior C#/.NET Developer: Code Review, Refactoring & Interview Guide](#senior-csharp-code-review-refactoring-interview-guide-md)
 - [Shallow Clone vs. Deep Clone in C#](#shallow-vs-deep-clone-md)
 - [Reflection: Get a Property by Name Using `Type`](#get-property-using-type-csharp-md)
+- [Delegates, Events, Domain Events and Integration Events](01.1-csharp-delegates-events-domain-and-integration-events.md) *(separate guide)*
+- [Pragmatic Clean Code (Condensed)](01.2-pragmatic-clean-code.md) *(separate guide)*
 - [Additional Questpond question sets](#additional-questpond-question-sets)
 
 ---
@@ -1942,7 +1944,7 @@ propertyInfo?.SetValue(obj, 100);              // write works the same way
 **Answer:** It is a collection designed for safe concurrent access by multiple threads, such as `ConcurrentDictionary<TKey,TValue>` or `ConcurrentQueue<T>`. Use it when shared concurrent mutation is needed, while still reasoning about atomicity across multi-step operations.
 
 ###### 16. What are delegates and built-in delegates? (PDF p. 6)
-**Answer:** A delegate is a type-safe reference to method(s) with a matching signature. Common generic delegates are `Action` (no result), `Func` (result), and `Predicate<T>` (Boolean test); events are commonly backed by delegates.
+**Answer:** A delegate is a type-safe reference to method(s) with a matching signature. Common generic delegates are `Action` (no result), `Func` (result), and `Predicate<T>` (Boolean test); events are commonly backed by delegates. For multicast delegates, `event` encapsulation, and awaitable handlers, see [Delegates, Events, Domain Events and Integration Events](01.1-csharp-delegates-events-domain-and-integration-events.md).
 
 ###### 17. What is LINQ? (PDF p. 6)
 **Answer:** Language Integrated Query provides composable query operations for in-memory collections and providers such as EF Core. It supports query and method syntax; execution may be immediate or deferred depending on the operator and provider.

@@ -8,6 +8,8 @@ Each concept is explained once. Where several notes covered the same topic, they
 - [Saga Pattern in .NET: Choreography vs. Orchestration](#saga-pattern-dotnet-md)
 - [Asynchronous Messaging in .NET — Senior Developer & Architect Viva Guide](#async-messaging-dotnet-viva-guide-md)
 - [Distributed Async Processing, Locks, and Resilience](#distributed-async-processing)
+- [Partitioning, Sharding, and Distributed Data](#partitioning-sharding-distributed-data)
+- [Integration events, Outbox, and idempotency](01.1-csharp-delegates-events-domain-and-integration-events.md) *(separate guide)*
 - [Additional Questpond question sets](#additional-questpond-question-sets)
 
 ---
@@ -788,6 +790,184 @@ A lock alone does not make a job durable or guarantee exactly-once effects. Use 
 ### Resilience patterns
 
 Timeouts, retries with backoff, circuit breakers, bulkheads, backpressure, and idempotency keys are explained in the blueprint above (**8. Resilience and overload protection**); outbox, idempotent consumers, and dead-lettering are in **Reliability patterns an architect should mention**.
+
+---
+
+<a id="partitioning-sharding-distributed-data"></a>
+
+## Partitioning, Sharding, and Distributed Data
+
+*Source: "Indexing, Partitioning, Sharding & Transaction Isolation — A Database-Agnostic System Design Guide" (Parts 2, 3, and 5). Indexing and transaction isolation are in [05 — Database Indexing and Transaction Isolation](05-efcore-linq-and-sql.md#database-indexing-and-isolation). Saga orchestration vs choreography is in [Saga Pattern in .NET](#saga-pattern-dotnet-md) and the Outbox pattern in [Asynchronous Messaging](#the-dual-write-problem-and-the-outbox-pattern); they are linked here rather than repeated.*
+
+### Partitioning
+
+Partitioning splits **one logical dataset** into physical segments, usually inside one cluster, behind one logical name. It is **not primarily about capacity** — partitions share the same CPU, RAM, and disk. It makes a huge dataset manageable:
+
+1. **Query pruning** — a query scoped to the partition key never touches other partitions.
+2. **Maintenance parallelism** — vacuum/compaction, statistics, and index rebuilds run per partition.
+3. **Cheap lifecycle** — dropping or archiving a time partition is a metadata operation, not millions of deletes.
+4. **Smaller, cache-friendlier indexes** per partition.
+
+**Horizontal vs vertical.** Horizontal splits rows by a key. Vertical splits columns into a hot piece and a cold/oversized piece (engines do this automatically for large values — PostgreSQL TOAST, off-page BLOB/TEXT — or you do it in the schema).
+
+| Strategy | Best for | Watch out for |
+|---|---|---|
+| **Range** (`created_at` ranges) | Time series; archive-the-old lifecycle | Must pre-create future partitions; skew if data is uneven |
+| **List** (`region IN (...)`) | Discrete known categories | Uneven category sizes |
+| **Hash** (`hash(customer_id) % N`) | Even load with no natural range/list key | Range scans touch every partition; pruning only helps exact-match on the hashed key |
+
+SQL Server implements this with partition functions and schemes; PostgreSQL with declarative partitioning (`pg_partman` automates creation and retention); BigQuery/Snowflake with partitioned or clustered tables.
+
+**Cross-engine gotchas**
+
+1. A unique constraint generally **must include the partition key**; global uniqueness needs a lookup table or collision-free IDs.
+2. There is usually no true global index — each partition has local indexes.
+3. A query that does not filter on the partition key **cannot prune** and may be worse than no partitioning.
+4. Changing a row's partition key is physically a delete + insert.
+5. Too many partitions add planning/metadata overhead; tens to low hundreds is the sweet spot, thousands is a warning sign.
+
+**Migrating a live giant table into partitions** — expand → dual-write → backfill → cutover → contract:
+
+```text
+1. Create the new partitioned structure (empty).
+2. Dual-write new records to old and new.
+3. Backfill history in small batches, respecting lock/timeout limits.
+4. Verify counts/checksums.
+5. Cut reads over.
+6. Stop writes to the old structure; remove it when confident.
+```
+
+**When partitioning does not help:** small datasets (below tens of millions of rows), queries not aligned with the partition key, and over-partitioning.
+
+### Sharding
+
+Sharding distributes data across **independent nodes** so no single machine holds or serves all of it. It adds capacity; partitioning does not.
+
+| | Partitioning | Sharding |
+|---|---|---|
+| Deployment | Usually one cluster | Many independent nodes / failure domains |
+| Resources | Shared pool | Each node has its own CPU/RAM/disk |
+| Solves | Maintenance and planning cost of one huge dataset | The capacity ceiling of one node |
+| Cross-unit operations | Still local to one node | Become distributed operations (hard) |
+| Adding one | Metadata operation | Infrastructure + data rebalancing |
+
+They compose: a well-designed shard is often a partitioned dataset internally (for example, hash-shard by tenant, range-partition by month inside each shard).
+
+**Sharding strategies**
+
+| Strategy | How | Pros | Cons |
+|---|---|---|---|
+| **Range** | Key ranges per shard | Simple; range scans stay in a shard | Hotspots (all new writes hit the newest shard) |
+| **Hash** | `hash(key) mod N` | Even distribution | Range scans fan out; changing `N` moves almost all data |
+| **Consistent hashing** | Hash ring with virtual nodes | Adding/removing a node moves ~1/N of data | More complex to operate |
+| **Directory / lookup** | Explicit `key → shard` map | Flexible; can move specific hot keys | The directory becomes a critical, highly available dependency |
+
+Naive `mod N`: going from 4 to 5 shards remaps almost every key (≈ 4/5 of the data moves). Consistent hashing moves only the ring segment adjacent to the new node (≈ 1/5).
+
+**Choosing a shard key — the most important decision.** Good keys have high cardinality, match the dominant access pattern, **co-locate related data** (one tenant/user on one shard so joins and transactions stay local), and distribute evenly. Bad keys: a raw increasing timestamp with hash sharding (scatters time ranges), a low-cardinality or lopsided field (a "country" key where one country has 80% of users), or a key unrelated to how data is queried. If you need both time-range queries and horizontal scale, hash-shard on something else and partition by time inside each shard.
+
+**Canonical multi-tenant SaaS answer:** shard by `tenant_id`. Per-tenant reads, writes, joins, and transactions stay on one shard; only cross-tenant analytics fans out.
+
+**Cross-shard queries (scatter-gather).** A query that cannot route by its key is broadcast to all shards and merged by a coordinator. Latency is bounded by the *slowest* shard, so tail latency worsens as shard count grows, and cross-shard joins require co-location or shipping data — which is why small reference data is often duplicated on every shard.
+
+**Hot shard / celebrity problem.** If one key or tenant carries most of the traffic, adding shards does not help under pure key routing. Mitigations: write-shard the hot key across several physical partitions with a synthetic suffix, cache that key aggressively, move it to dedicated capacity (directory-based maps only), or rate-limit/isolate the noisy key.
+
+### Distributed transactions: coordination patterns
+
+A transaction spanning two shards — or two microservices that each own a private database — cannot be a single ACID transaction. Something else must provide atomicity or a defined recovery path. Roughly in order of "decoupling gained vs atomicity given up":
+
+**Two-phase commit (2PC).** Phase 1: the coordinator sends `PREPARE`; each participant does all work needed to guarantee it *can* commit (log, locks) and votes. Phase 2: if all voted yes, `COMMIT`; otherwise `ABORT`. Why it is rarely the answer across microservices:
+
+- **Blocking:** participants hold locks from `PREPARE` until they hear back; if the coordinator dies they are *in-doubt*.
+- The coordinator is a single point of failure and a throughput bottleneck.
+- Needs every participant to speak the same protocol (XA/MSDTC) — impossible across a SQL database, a message queue, and a third-party HTTP API.
+- Synchronous; holds resources for as long as the slowest participant.
+
+2PC survives *inside* one vendor's distributed database, where the vendor controls every participant. (In .NET, MSDTC-backed `TransactionScope` distributed transactions are the legacy instance of this; modern .NET supports them on Windows only, so do not design around them.)
+
+**Saga.** A sequence of local transactions, each committed immediately, with a **compensating transaction** per step to undo it semantically if a later step fails. Orchestration (central coordinator/state machine) vs choreography (services react to each other's events) is covered in [Saga Pattern in .NET](#saga-pattern-dotnet-md). Both require **idempotent steps and compensations**, and a compensation is a new forward business action ("issue refund"), not an ACID rollback; some effects (an e-mail sent) may not be compensable at all.
+
+**TCC — Try / Confirm / Cancel.** Each participant exposes three operations:
+
+```text
+Try:     reserve without committing the business effect   ("hold $100", "reserve 1 unit")
+Confirm: make the reservation permanent                   ("capture the hold")
+Cancel:  release the reservation                          ("void the hold")
+```
+
+If every `Try` succeeds, confirm all; if any fails or times out, cancel all. Because `Try` reserves rather than mutates final state, TCC avoids the Saga's "compensate something that fully landed" ambiguity. The cost: three coordinated operations per participant and a reconciliation job that releases abandoned reservations. It is the natural shape of payment authorize-then-capture and inventory holds.
+
+**Outbox.** Every pattern above depends on a service's local write and the message it emits succeeding or failing *together*; see [the dual-write problem and the Outbox pattern](#the-dual-write-problem-and-the-outbox-pattern).
+
+**Quorum vs consensus** are different things:
+
+| Quorum replication | Consensus (Paxos / Raft) |
+|---|---|
+| Reading/writing replicas of the **same data** consistently, tunable with R/W/N | Getting nodes to agree on **one value or one order** despite failures |
+| Cassandra, DynamoDB | Leader election, distributed locks, fault-tolerant transaction coordinators |
+
+2PC's coordinator is a single point of failure; **Paxos Commit**-style designs replace it with a consensus-backed group. In practice you reuse consensus building blocks — ZooKeeper/etcd/Consul for locks and leader election, or distributed-SQL platforms (Spanner, CockroachDB, YugabyteDB) that run consensus per data range so cross-shard transactions inside one cluster are strongly atomic without application-level 2PC/Saga/TCC.
+
+| Pattern | Atomicity | Coupling | Availability under failure | Typical use |
+|---|---|---|---|---|
+| **2PC** | Strong | Tight (same protocol everywhere) | Poor — blocks, in-doubt locks | Narrow, trusted, homogeneous participants |
+| **TCC** | Strong-ish via reservations | Medium (3 operations each) | Good, needs reservation timeouts | Payments, inventory holds |
+| **Saga — orchestration** | Eventual, via compensation | Medium (to orchestrator) | Good | Complex flows needing visibility |
+| **Saga — choreography** | Eventual, via compensation | Loose (event contracts only) | Good | Simple linear flows |
+| **Consensus platform** | Strong, built in | Tight to the platform | Good (tolerates minority failure) | Standardizing on one distributed-SQL platform |
+
+If you are building coordination across independently owned microservices, you are almost always choosing between a Saga and TCC; 2PC and hand-rolled consensus are rarely worth building.
+
+### Replication factor and quorums (Dynamo-style)
+
+```text
+N = replicas of each item     W = replicas that must ack a write     R = replicas read
+R + W > N  → read and write sets overlap → strongly consistent reads (higher latency)
+R + W ≤ N  → reads can miss recent writes → eventual consistency (lower latency, more available)
+```
+
+`W=1, R=1` favors availability and latency; `W=N` or `R+W>N` favors consistency at the cost of availability during partial failures. This is the CAP trade-off made tunable (Cassandra `ONE`/`QUORUM`/`ALL`; DynamoDB eventual vs strong reads).
+
+### Sharding decision checklist
+
+1. Have indexing, caching, and read replicas been exhausted first?
+2. Is the bottleneck writes/total size (needs sharding) or reads (usually cheaper with replicas/cache)?
+3. Is there a shard key that is high-cardinality, even, and aligned with the dominant access pattern?
+4. How much of the workload is genuinely cross-shard? If most, sharding will hurt until the data model changes.
+5. Who handles distributed transactions — 2PC, sagas, or shard-key design that makes them rare?
+6. Is the rebalancing plan (consistent hashing or directory) decided *before* a shard gets hot?
+
+### The scaling escalation ladder
+
+| Symptom | First try | Escalate to |
+|---|---|---|
+| Slow individual query | Right index | Query/schema rewrite |
+| Dataset so large maintenance cannot keep up | Partitioning | (still one cluster) |
+| Read traffic exceeds one node | Read replicas + connection pooling | Cache, only if the workload repeats |
+| Write traffic or data size exceeds one node | Sharding | Purpose-built distributed platform |
+| Concurrent operations violate a cross-record invariant | Stronger isolation / explicit locking | Redesign the invariant to be single-record |
+
+| | Partitioning | Read replica | Sharding |
+|---|---|---|---|
+| Adds write capacity | No | No | **Yes** |
+| Adds read capacity | Indirectly (smaller scans) | **Yes** | Yes |
+| Storage beyond one node | No | No | **Yes** |
+| Transactions stay simple/local | Yes | Yes (reads only) | Only within one shard |
+| Operational complexity | Low–medium | Medium (replication lag) | High (routing, rebalancing, cross-shard transactions) |
+
+**One-paragraph interview answer:** *Start by making sure access patterns are served by the right indexes and the schema matches the queries — that often removes the need to scale out. If a dataset's own maintenance becomes the bottleneck, partition it (usually by time or a natural category) and make sure queries prune on that key. If reads outgrow one node, add replicas or a cache, but only cache what repeats. Only when write throughput or total size outgrows one node, shard — with a key matching the dominant access pattern (for example tenant ID) so transactions and joins stay within one shard, because cross-shard transactions are where distributed systems get expensive. Throughout, choose the weakest isolation/consistency level that still protects the invariants that matter.*
+
+### Quick reference
+
+| Question | Answer |
+|---|---|
+| Dataset too big for maintenance windows | Partition, usually by time, inside the cluster |
+| Query does not filter on the partition key | Partitioning will not help — fix the key or the query |
+| One node cannot hold write load or size | Shard by the dominant access pattern |
+| Sharded by hash, need to add a node | Consistent hashing instead of `mod N` |
+| One tenant/key dominates traffic | Hot shard — sub-shard it or isolate it |
+| Tunable consistency in a replicated store | `R + W > N` for strong reads |
+| Transaction spans two shards | 2PC (strong, can strand in-doubt) or Saga (available, needs compensations) |
 
 ---
 

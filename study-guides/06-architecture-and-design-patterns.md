@@ -7,6 +7,8 @@ Each concept is explained once. Where several notes covered the same topic, they
 - [23 GoF Design Patterns in C# — Senior .NET Developer / Architect Viva Guide](#23-design-patterns-csharp-senior-viva-md)
 - [Why Choose Clean Architecture with CQRS over MVC in .NET 8?](#clean-architecture-cqrs-vs-mvc-dotnet8-md)
 - [Senior .NET Developer & Solution Architect — Viva Preparation](#senior-dotnet-architect-viva-prep-md)
+- [Domain events, dispatching, and integration events](01.1-csharp-delegates-events-domain-and-integration-events.md) *(separate guide)*
+- [SOLID and clean code in practice (Pragmatic Clean Code)](01.2-pragmatic-clean-code.md) *(separate guide)*
 - [Additional Questpond question sets](#additional-questpond-question-sets)
 
 ---
@@ -690,7 +692,7 @@ public sealed class OrderEmailSubscriber(IEmailSender emailSender)
 }
 ```
 
-**Senior-level consideration:** C# events are a direct Observer-style mechanism for in-process notification. The `async void` event handler is shown only to illustrate the event shape; in production, prefer an explicit asynchronous event-dispatch abstraction when the publisher must await subscribers or observe failures. Unsubscribe long-lived subscribers when appropriate. In distributed systems, use durable messaging or an outbox when notification delivery must survive process failure.
+**Senior-level consideration:** C# events are a direct Observer-style mechanism for in-process notification. The `async void` event handler is shown only to illustrate the event shape; in production, prefer an explicit asynchronous event-dispatch abstraction when the publisher must await subscribers or observe failures. Unsubscribe long-lived subscribers when appropriate. In distributed systems, use durable messaging or an outbox when notification delivery must survive process failure. The awaitable-handler alternative is explained in [Delegates, Events, Domain Events and Integration Events](01.1-csharp-delegates-events-domain-and-integration-events.md), including the DDD version (domain events, dispatching, Outbox).
 
 #### 20. State
 

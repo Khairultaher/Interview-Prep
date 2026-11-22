@@ -33,6 +33,12 @@ Use this roadmap to plan preparation across .NET runtime, C#, APIs, data, archit
 
 -   **Core language features:** Generics, delegates, events, LINQ,
     records, pattern matching, and nullable reference types.
+-   **Delegates and events:** Multicast delegates, `event`
+    encapsulation, why `async void` breaks event handling, and
+    awaitable (`Task`-returning) handlers.
+-   **Clean code practices:** Naming, small focused methods, explicit
+    dependencies, comments, and testable code (condensed from
+    *Pragmatic Clean Code*).
 -   **Async programming:** `Task`, `async`/`await`, continuations,
     cancellation tokens, exception propagation, and common
     deadlock/blocking mistakes.
@@ -96,16 +102,22 @@ Use this roadmap to plan preparation across .NET runtime, C#, APIs, data, archit
 -   **Pagination and large datasets:** Efficient ordering, keyset
     pagination, batching, and streaming where appropriate.
 -   **SQL Server fundamentals:** Execution plans, clustered/nonclustered
-    indexes, statistics, sargability, and index trade-offs.
+    indexes, statistics, sargability, and index trade-offs. Engine-agnostic
+    design: B-Tree vs LSM-Tree, composite-index column order (leftmost
+    prefix), covering/filtered indexes, and write amplification.
 -   **Transactions and concurrency:** ACID, isolation levels, locks,
     deadlocks, optimistic concurrency, and retrying transient database
-    errors.
+    errors. Know the anomalies (dirty/non-repeatable/phantom reads, lost
+    update, write skew), what each isolation level really prevents per
+    engine, and that strong levels require retrying the whole operation.
 -   **Connection management:** ADO.NET connection pooling, command
     timeouts, EF Core context pooling, and their distinct purposes.
 -   **Dapper vs. EF Core:** Choosing based on complexity, control,
     maintainability, and measured performance.
 -   **Database scaling:** Read replicas, partitioning, sharding, and
-    when these approaches are warranted.
+    when these approaches are warranted. Include range/list/hash
+    partitioning, shard-key choice, consistent hashing, hot shards,
+    scatter-gather, and R/W/N quorums.
 -   **SQL vs. NoSQL:** Data-model and consistency trade-offs; choose
     document databases such as MongoDB or Cosmos DB for concrete
     workload needs.
@@ -113,7 +125,8 @@ Use this roadmap to plan preparation across .NET runtime, C#, APIs, data, archit
 ### 6. Architecture, Design Principles, and Domain Modeling
 
 -   **SOLID and clean code:** Cohesion, coupling, abstractions, and
-    maintainable boundaries.
+    maintainable boundaries. Be able to give a violation and a fix for
+    each SOLID principle, and explain the limits of OCP.
 -   **Dependency inversion and Clean Architecture:** Domain,
     application, infrastructure, and presentation responsibilities.
 -   **Common design patterns:** Strategy, Factory, Decorator, Adapter,
@@ -125,7 +138,9 @@ Use this roadmap to plan preparation across .NET runtime, C#, APIs, data, archit
     workload benefits; CQRS does not automatically require separate
     databases or event sourcing.
 -   **Domain events:** Represent meaningful domain facts and coordinate
-    in-process reactions without coupling unrelated domain logic.
+    in-process reactions without coupling unrelated domain logic. Record
+    events in the aggregate, dispatch from the unit of work, and know
+    before-commit vs after-commit trade-offs.
 -   **Modular monolith vs. microservices:** Boundaries, deployment
     independence, operational cost, and criteria for splitting services.
 
@@ -194,7 +209,8 @@ Use this roadmap to plan preparation across .NET runtime, C#, APIs, data, archit
     retry storms and retries for non-idempotent operations.
 -   **Distributed transactions:** Why ordinary database transactions do
     not span independent services; Saga orchestration/choreography and
-    compensating actions.
+    compensating actions; compare with 2PC, TCC, and consensus-backed
+    platforms.
 -   **Consistency and failure modes:** Eventual consistency, duplicate
     delivery, partial failure, clock assumptions, and CAP trade-offs.
 -   **Event sourcing:** Store domain events as the source of truth only
