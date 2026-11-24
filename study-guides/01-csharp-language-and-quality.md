@@ -83,6 +83,8 @@ The difference is not simply the number of language features a candidate can nam
 **Use for:** HTTP calls, database access, file I/O, and other asynchronous I/O.
 
 ```csharp
+public sealed record UserDto(int Id, string Name, string Email);
+
 public async Task<UserDto?> GetUserAsync(
     int id,
     CancellationToken cancellationToken)
@@ -109,19 +111,36 @@ public async Task<UserDto?> GetUserAsync(
 Enable nullable reference types for projects where feasible, then model optional data explicitly.
 
 ```csharp
-public sealed record UserDto(
-    int Id,
-    string Name,
-    string? MiddleName,
-    string Email);
-```
+#nullable enable
 
-```csharp
-if (user?.Profile?.Email is { Length: > 0 } email)
+public sealed record Profile(string? Email);      // Email is optional
+
+public sealed record User(
+    int Id,
+    string Name,                                   // required, never null
+    string? MiddleName,                            // optional, may be null
+    Profile? Profile);                             // optional, may be null
+
+public async Task NotifyAsync(User? user, CancellationToken cancellationToken)
 {
-    await _mailer.SendAsync(email, cancellationToken);
+    // Safe: each ?. stops and returns null if the value before it is null
+    if (user?.Profile?.Email is { Length: > 0 } email)
+    {
+        await _mailer.SendAsync(email, cancellationToken); // email is non-null and non-empty here
+    }
+
+    // Compiler warning CS8602: 'user' may be null
+    var name = user.Name;
 }
 ```
+
+| Code | Meaning |
+|---|---|
+| `string Name` | Must not be null; assigning `null` produces a warning. |
+| `string? MiddleName` | May be null; using it without a check produces a warning. |
+| `User? user` | The parameter itself may be null. |
+| `user?.Profile?.Email` | Null if `user` or `Profile` is null, otherwise the email. |
+| `is { Length: > 0 } email` | True only if non-null and non-empty; binds the value to `email`. |
 
 **Why it helps:** Makes optional values visible in APIs and catches many potential null dereferences at compile time. Nullable annotations are compile-time analysis, not automatic runtime validation of incoming data.
 
@@ -377,9 +396,9 @@ public static class StringExtensions
         public bool IsEmpty => value.Length == 0;
     }
 
-    extension(string)   // static members on the type itself
+    extension(string)   // no instance parameter: adds a static member to `string` itself
     {
-        public static string Empty2 => "";
+        public static string Unknown => "<unknown>";   // usable as string.Unknown
     }
 }
 ```
@@ -413,6 +432,8 @@ customer?.Order = CreateOrder();   // CreateOrder() not called when customer is 
 These examples show useful refactoring patterns. Modern syntax is not automatically better: the goal is clearer intent, correctness, and measured performance.
 
 ##### Case 1: Nested null checks
+
+> Assumes the `User` / `Profile` types from section 2.2, where `user`, `Profile`, and `Email` are all nullable.
 
 **Before**
 
@@ -508,6 +529,8 @@ var names = users
 LINQ is a good fit for transformations. A `foreach` loop may be clearer when the logic is stateful, complex, or involves side effects. Avoid `Where(...).ToList().ForEach(...)` just to create a fluent-looking chain.
 
 ##### Case 5: Mutable data transfer object
+
+> A simplified, standalone `UserDto` (just `Id` and `Name`), separate from the one in section 2.1.
 
 **Before**
 
@@ -898,7 +921,7 @@ These are .NET types, not C# language keywords.
   `Guid`                  `Guid.NewGuid()`                          `Parse`, `TryParse`,
                                                                     `ToString`
 
-  `decimal` helpers       `Math.Round(12.345, 2)` is for `double`   Use `decimal.Round`,
+  `decimal` rounding      `Math.Round` is meant for `double`        Use `decimal.Round`,
                                                                     `decimal.Floor`,
                                                                     `decimal.Ceiling` for
                                                                     `decimal`
@@ -946,12 +969,13 @@ working with decimal values.
     runtime.
 
 ``` csharp
-int? optionalNumber = null;           // Nullable<int>
-DateTime? optionalDate = null;
-dynamic item = 10;
-item = "now a string";
+enum Status { Pending, Complete }     // declared at type level (not inside a method)
 
-enum Status { Pending, Complete }
+int? optionalNumber = null;           // Nullable<int>: a value type that can also be null
+DateTime? optionalDate = null;
+dynamic item = 10;                    // type is resolved at runtime, not compile time
+item = "now a string";                // allowed because it is dynamic
+
 Status status = Status.Pending;
 string statusText = status.ToString();
 Status parsedStatus = Enum.Parse<Status>("Complete");
@@ -1149,19 +1173,21 @@ Sets store unique values. `HashSet<T>` is hash-based and unordered;
 `SortedSet<T>` maintains sort order.
 
 ``` csharp
-var set = new HashSet<int> { 1, 2, 2 };
-set.Add(3);
-set.Contains(2);
-set.UnionWith(new[] { 3, 4 });
-set.IntersectWith(new[] { 2, 4 });
-set.ExceptWith(new[] { 1 });
-set.SymmetricExceptWith(new[] { 4, 5 });
-bool subset = set.IsSubsetOf(new[] { 2, 4, 5 });
+// Note: UnionWith/IntersectWith/ExceptWith/SymmetricExceptWith MODIFY the set
+// in place, so each line below works on the result of the previous one.
+var set = new HashSet<int> { 1, 2, 2 };   // {1, 2}  (duplicate 2 ignored)
+set.Add(3);                                // {1, 2, 3}
+bool has2 = set.Contains(2);               // true
+set.UnionWith(new[] { 3, 4 });             // {1, 2, 3, 4}  (all items from both)
+set.IntersectWith(new[] { 2, 4 });         // {2, 4}        (only items in both)
+set.ExceptWith(new[] { 4 });               // {2}           (remove items found in the other)
+set.SymmetricExceptWith(new[] { 2, 5 });   // {5}           (items in one set but not both)
+bool subset = set.IsSubsetOf(new[] { 5, 6 }); // true: every item of set is in {5, 6}
 
-var sortedSet = new SortedSet<int> { 5, 1, 3 };
-int min = sortedSet.Min;
-int max = sortedSet.Max;
-var range = sortedSet.GetViewBetween(2, 5);
+var sortedSet = new SortedSet<int> { 5, 1, 3 }; // stored as 1, 3, 5
+int min = sortedSet.Min;                         // 1
+int max = sortedSet.Max;                         // 5
+var range = sortedSet.GetViewBetween(2, 5);      // live view of items 2..5 => {3, 5}
 ```
 
 Key members: `Add`, `Remove`, `RemoveWhere`, `Contains`, `Clear`,
@@ -1359,21 +1385,26 @@ implicit in modern .NET templates).
 ``` csharp
 var numbers = new[] { 5, 2, 8, 2, 1 };
 
-var filtered = numbers.Where(x => x > 2);
-var projected = numbers.Select(x => x * 10);
-var ordered = numbers.OrderBy(x => x);
-var distinct = numbers.Distinct();
-var first = numbers.First();
-var maybeFirst = numbers.FirstOrDefault();
-bool anyLarge = numbers.Any(x => x > 7);
-bool allPositive = numbers.All(x => x > 0);
-int total = numbers.Sum();
-int count = numbers.Count();
-var groups = numbers.GroupBy(x => x);
-var lookup = numbers.ToLookup(x => x % 2);
-var list = numbers.ToList();
-var set = numbers.ToHashSet();
-var map = numbers.Distinct().ToDictionary(x => x, x => x * x);
+// Each line below starts from the same `numbers` array; results are shown as comments.
+var filtered = numbers.Where(x => x > 2);        // 5, 8
+var projected = numbers.Select(x => x * 10);     // 50, 20, 80, 20, 10
+var ordered = numbers.OrderBy(x => x);           // 1, 2, 2, 5, 8
+var distinct = numbers.Distinct();               // 5, 2, 8, 1
+var first = numbers.First();                     // 5 (throws if the sequence is empty)
+var maybeFirst = numbers.FirstOrDefault();       // 5 (0 if empty, the default for int)
+bool anyLarge = numbers.Any(x => x > 7);         // true  (8 matches)
+bool allPositive = numbers.All(x => x > 0);      // true
+int total = numbers.Sum();                       // 18
+int count = numbers.Count();                     // 5
+var groups = numbers.GroupBy(x => x);            // groups: 5 | 2,2 | 8 | 1
+var lookup = numbers.ToLookup(x => x % 2);       // key 1: 5,1   key 0: 2,8,2 (odd/even)
+var list = numbers.ToList();                     // List<int> copy
+var numberSet = numbers.ToHashSet();             // {5, 2, 8, 1}
+var map = numbers.Distinct().ToDictionary(x => x, x => x * x); // 5->25, 2->4, 8->64, 1->1
+// Distinct() is needed first: ToDictionary throws on duplicate keys (2 appears twice).
+
+// Where/Select/OrderBy/Distinct are deferred: they run only when enumerated
+// (foreach, ToList, Count...). First/Any/Sum/ToList etc. run immediately.
 ```
 
 Common LINQ operators: `Where`, `Select`, `SelectMany`, `OrderBy`,
@@ -1484,6 +1515,8 @@ var displayName = user?.Name ?? "Guest";
 ##### 2.2 Ternary operator
 
 ```csharp
+// The "Old" and "Modern" versions are alternatives (not meant to be in the same method).
+
 // Old
 string label;
 if (isActive)
@@ -1770,12 +1803,12 @@ var original = new Person
 
 var clone = original.ShallowClone();
 
-clone.Name = "Bob";
-clone.Address.City = "London";
+clone.Name = "Bob";             // changes only the clone (string is replaced, not shared state)
+clone.Address.City = "London";  // changes the SHARED Address object, so the original sees it too
 
-Console.WriteLine(original.Name);         // Alice
-Console.WriteLine(original.Address.City); // London
-Console.WriteLine(ReferenceEquals(original.Address, clone.Address)); // True
+Console.WriteLine(original.Name);         // Alice  (unaffected)
+Console.WriteLine(original.Address.City); // London (affected! same Address object)
+Console.WriteLine(ReferenceEquals(original.Address, clone.Address)); // True: one shared object
 ```
 
 `Name` is a `string`. Assigning a different string to `clone.Name` does not change `original.Name`. The `Address` property, however, points to the same `Address` instance in both objects, so changing its `City` is visible through both references.
@@ -1787,6 +1820,8 @@ Console.WriteLine(ReferenceEquals(original.Address, clone.Address)); // True
 A **deep clone** creates a separate copy of the object and of the mutable objects it references, recursively as required by the application's data model.
 
 ##### Example
+
+> This `Person` replaces the one in the shallow example above (same `Address` class); it swaps `ShallowClone()` for `DeepClone()`.
 
 ```csharp
 public class Person
@@ -2144,17 +2179,19 @@ propertyInfo?.SetValue(obj, 100);              // write works the same way
 ###### 46. Which code will perform better? (PDF pp. 6–7; code image continues on p. 7)
 **Prompt examples:**
 ```csharp
+// Option A: string concatenation (slower)
 string longString = "";
 for (int i = 0; i < 1000; i++)
 {
-    longString += "one more ";
+    longString += "one more ";   // creates a NEW string each time and copies the old text
 }
 
+// Option B: StringBuilder (faster)
 StringBuilder sBuilder = new StringBuilder();
 for (int i = 0; i < 1000; i++)
 {
-    sBuilder.Append("Add This");
+    sBuilder.Append("one more ");   // appends into one growing buffer
 }
-string str = sBuilder.ToString();
+string str = sBuilder.ToString();   // creates the final string once
 ```
-**Answer:** The `StringBuilder` approach is generally faster and allocates less for repeated concatenation in a loop. C# strings are immutable, so each `+=` creates a new string and copies prior content; `StringBuilder` reuses a mutable buffer and creates the final string once. The sample appends different text in each version, so a fair benchmark should use equivalent output and representative input sizes.
+**Answer:** The `StringBuilder` approach is generally faster and allocates less for repeated concatenation in a loop. C# strings are immutable, so each `+=` creates a new string and copies prior content; `StringBuilder` reuses a mutable buffer and creates the final string once. (Both versions above now append the same text so the comparison is fair; for real decisions, benchmark with representative input sizes.)
