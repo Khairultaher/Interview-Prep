@@ -13,19 +13,27 @@ Use this roadmap to plan preparation across .NET runtime, C#, APIs, data, archit
 
 -   **CLR (Common Language Runtime):** What the CLR does, managed
     execution, assemblies, metadata, and runtime services.
--   **Compilation and execution:** C# compilation, IL, JIT compilation,
-    tiered compilation, and ReadyToRun.
--   **Memory fundamentals:** Stack vs. heap, object lifetime,
+-   **Compilation and execution:** C# compilation, IL (Intermediate
+    Language, the portable code the C# compiler emits), JIT (just-in-time,
+    compiles IL to machine code at run time), tiered compilation (quick
+    first compile, re-optimize hot methods), and ReadyToRun (precompiled
+    code to speed startup).
+-   **Memory fundamentals:** Stack vs. heap, object lifetime,
     references, and allocation.
--   **Garbage collection:** Generations 0/1/2, large object heap,
-    workstation vs. server GC, allocation pressure, and finalization.
+-   **Garbage collection:** Generations 0/1/2 (new objects
+    in gen 0, survivors promoted), large object heap (separate heap for
+    objects of about 85 KB or more), workstation vs. server GC (one
+    desktop-style GC vs. per-core GC threads for throughput), allocation
+    pressure (creating many short-lived objects forces frequent
+    collections), and finalization.
 -   **ASP.NET Core request pipeline:** Middleware order, routing,
     endpoint execution, filters, and exception handling.
--   **Kestrel and IIS:** Hosting models, reverse proxying, request flow,
-    process recycling, and deployment considerations.
+-   **Kestrel and IIS:** Hosting models (Kestrel is the built-in web server; IIS
+    can sit in front of it), reverse proxying, request flow, process
+    recycling (IIS restarting the worker process), and deployment considerations.
 -   **Dependency injection:** Container resolution, service lifetimes
-    (`Transient`, `Scoped`, `Singleton`), scope validation, and
-    disposal.
+    (`Transient`, `Scoped`, `Singleton`), scope validation (catching a
+    Singleton that wrongly depends on a Scoped service), and disposal.
 -   **Configuration and options:** Configuration providers,
     environment-specific settings, and the Options pattern.
 
@@ -42,14 +50,15 @@ Use this roadmap to plan preparation across .NET runtime, C#, APIs, data, archit
 -   **Async programming:** `Task`, `async`/`await`, continuations,
     cancellation tokens, exception propagation, and common
     deadlock/blocking mistakes.
--   **Thread Pool:** Work-item scheduling, thread injection, starvation,
-    and diagnosing blocked worker threads.
--   **Concurrency vs. parallelism:** When to use asynchronous I/O,
+-   **Thread Pool:** Work-item scheduling, thread injection (the pool slowly adds threads
+    when all are busy), starvation (all threads blocked, so queued work
+    waits), and diagnosing blocked worker threads.
+-   **Concurrency vs. parallelism:** When to use asynchronous I/O,
     `Parallel`, `Task.Run`, and dedicated threads.
 -   **Synchronization:** Locks, `SemaphoreSlim`, concurrent collections,
     race conditions, and thread safety.
--   **Advanced memory APIs:** `Span<T>`, `Memory<T>`, `ArrayPool<T>`,
-    object pooling, and allocation-conscious code.
+-   **Advanced memory APIs:** `Span<T>` and `Memory<T>` (views over existing memory without
+    copying), `ArrayPool<T>` (rent and reuse arrays), object pooling, and allocation-conscious code.
 -   **Resource cleanup:** `IDisposable`, `IAsyncDisposable`, `using`,
     and safe handling of unmanaged resources.
 
@@ -66,7 +75,8 @@ Use this roadmap to plan preparation across .NET runtime, C#, APIs, data, archit
 -   **HTTP performance:** Compression, payload sizing, streaming,
     connection reuse, and HTTP protocol considerations.
 -   **Load and stress testing:** k6 or JMeter, throughput, latency
-    percentiles, saturation, and capacity limits.
+    percentiles (p95/p99: the time that 95%/99% of requests beat),
+    saturation (a resource is fully used), and capacity limits.
 -   **Production observability:** Metrics, traces, logs, dashboards,
     alerts, and service-level indicators.
 
@@ -76,18 +86,19 @@ Use this roadmap to plan preparation across .NET runtime, C#, APIs, data, archit
     status codes, headers, content negotiation, and API versioning.
 -   **Request validation and errors:** DTOs, validation, consistent
     problem details, exception handling, and safe error responses.
--   **Pagination and filtering:** Offset vs. keyset pagination, stable
-    ordering, filtering, sorting, and response-size limits.
+-   **Pagination and filtering:** Offset vs. keyset pagination (skip N rows vs.
+    continue after the last seen key), stable ordering, filtering, sorting, and response-size limits.
 -   **Idempotency and concurrency:** Safe retries for writes,
     idempotency keys, ETags, and optimistic concurrency.
--   **Caching and HTTP semantics:** Cache-Control, ETags, conditional
-    requests, output caching, and cache invalidation. Distributed cache
+-   **Caching and HTTP semantics:** Cache-Control, ETags (a version tag for a
+    response), conditional requests (client sends the tag; server replies
+    304 Not Modified if unchanged), output caching, and cache invalidation. Distributed cache
     implementation is covered in Section 9.
 -   **Rate limiting and throttling:** Partitioning limits by user,
     client, or IP; handling HTTP 429; and coordinating limits across
     instances.
--   **Alternative API styles:** GraphQL trade-offs, gRPC contracts and
-    Protobuf, SignalR/WebSockets for real-time communication.
+-   **Alternative API styles:** GraphQL trade-offs, gRPC (binary RPC over HTTP/2) contracts and
+    Protobuf (its schema/serialization format), SignalR/WebSockets for real-time communication.
 -   **Background work:** When to move long-running work out of the
     request lifecycle; durable jobs and hosted services are covered in
     Section 8.
@@ -96,37 +107,45 @@ Use this roadmap to plan preparation across .NET runtime, C#, APIs, data, archit
 
 -   **EF Core fundamentals:** Change tracking, migrations,
     relationships, query translation, and `DbContext` lifetime.
--   **Query performance:** Projection, `AsNoTracking`, avoiding N+1
-    queries, split queries, compiled queries, and inspecting generated
+-   **Query performance:** Projection (select only needed columns), `AsNoTracking`
+    (skip change tracking for read-only queries), avoiding N+1 queries
+    (one query for a list plus one more per row), split queries, compiled queries, and inspecting generated
     SQL.
 -   **Pagination and large datasets:** Efficient ordering, keyset
     pagination, batching, and streaming where appropriate.
 -   **SQL Server fundamentals:** Execution plans, clustered/nonclustered
-    indexes, statistics, sargability, and index trade-offs. Engine-agnostic
-    design: B-Tree vs LSM-Tree, composite-index column order (leftmost
-    prefix), covering/filtered indexes, and write amplification.
+    indexes, statistics, sargability (writing filters so an index can be used,
+    e.g. `WHERE Date >= @d` rather than `WHERE YEAR(Date) = 2024`), and
+    index trade-offs. Engine-agnostic
+    design: B-Tree vs LSM-Tree (log-structured merge tree: write-optimized
+    storage used by many NoSQL engines), composite-index column order (leftmost
+    prefix), covering/filtered indexes, and write amplification (one logical write causing several
+    physical writes, e.g. to each index).
 -   **Transactions and concurrency:** ACID, isolation levels, locks,
     deadlocks, optimistic concurrency, and retrying transient database
     errors. Know the anomalies (dirty/non-repeatable/phantom reads, lost
     update, write skew), what each isolation level really prevents per
     engine, and that strong levels require retrying the whole operation.
--   **Connection management:** ADO.NET connection pooling, command
+-   **Connection management:** ADO.NET connection pooling (reusing open database connections), command
     timeouts, EF Core context pooling, and their distinct purposes.
--   **Dapper vs. EF Core:** Choosing based on complexity, control,
+-   **Dapper vs. EF Core:** Choosing based on complexity, control,
     maintainability, and measured performance.
 -   **Database scaling:** Read replicas, partitioning, sharding, and
     when these approaches are warranted. Include range/list/hash
-    partitioning, shard-key choice, consistent hashing, hot shards,
-    scatter-gather, and R/W/N quorums.
--   **SQL vs. NoSQL:** Data-model and consistency trade-offs; choose
+    partitioning, shard-key choice, consistent hashing (adding a node moves only a small share of keys),
+    hot shards (one shard receiving disproportionate load), scatter-gather
+    (query all shards, merge results), and R/W/N quorums (replicas read,
+    written, and total; R + W > N gives read-your-writes consistency).
+-   **SQL vs. NoSQL:** Data-model and consistency trade-offs; choose
     document databases such as MongoDB or Cosmos DB for concrete
     workload needs.
 
 ### 6. Architecture, Design Principles, and Domain Modeling
 
--   **SOLID and clean code:** Cohesion, coupling, abstractions, and
-    maintainable boundaries. Be able to give a violation and a fix for
-    each SOLID principle, and explain the limits of OCP.
+-   **SOLID and clean code:** Cohesion (things in a class belong together), coupling (how much
+    classes depend on each other), abstractions, and maintainable
+    boundaries. Be able to give a violation and a fix for
+    each SOLID principle, and explain the limits of OCP (Open/Closed Principle).
 -   **Dependency inversion and Clean Architecture:** Domain,
     application, infrastructure, and presentation responsibilities.
 -   **Common design patterns:** Strategy, Factory, Decorator, Adapter,
@@ -141,15 +160,16 @@ Use this roadmap to plan preparation across .NET runtime, C#, APIs, data, archit
     in-process reactions without coupling unrelated domain logic. Record
     events in the aggregate, dispatch from the unit of work, and know
     before-commit vs after-commit trade-offs.
--   **Modular monolith vs. microservices:** Boundaries, deployment
+-   **Modular monolith vs. microservices:** Boundaries, deployment
     independence, operational cost, and criteria for splitting services.
 
 ### 7. Security and Identity
 
--   **Authentication vs. authorization:** Identity verification and
+-   **Authentication vs. authorization:** Identity verification and
     permission enforcement.
--   **OAuth 2.0 and OpenID Connect:** Authorization Code with PKCE,
-    client credentials, scopes, audiences, and choosing an identity
+-   **OAuth 2.0 and OpenID Connect:** Authorization Code with PKCE (Proof Key
+    for Code Exchange, protects the code flow for public clients), client
+    credentials (service-to-service, no user), scopes, audiences, and choosing an identity
     provider.
 -   **JWT validation:** Issuer, audience, signature, expiry, key
     rotation, claims, and secure token handling. A JWT is signed, not
@@ -159,10 +179,12 @@ Use this roadmap to plan preparation across .NET runtime, C#, APIs, data, archit
 -   **Password and secret handling:** Use established identity libraries
     and password hashing; keep secrets in a secret manager such as Azure
     Key Vault.
--   **Web/API threats:** SQL injection, XSS, CSRF, SSRF, broken access
+-   **Web/API threats:** SQL injection, XSS (cross-site scripting), CSRF (cross-site
+    request forgery), SSRF (server-side request forgery), broken access
     control, insecure deserialization, and dependency vulnerabilities.
--   **Transport and browser security:** HTTPS, CORS, CSP, security
-    headers, cookies, SameSite, and antiforgery protections where
+-   **Transport and browser security:** HTTPS, CORS (which other origins may call the API), CSP
+    (Content Security Policy, limits what scripts a page may run),
+    security headers, cookies, SameSite, and antiforgery protections where
     applicable.
 -   **API protection:** Rate limits, input validation, least privilege,
     safe error handling, and audit logging.
@@ -175,9 +197,10 @@ Use this roadmap to plan preparation across .NET runtime, C#, APIs, data, archit
 -   **Hosted services and job schedulers:**
     `IHostedService`/`BackgroundService`, Hangfire, and Quartz.NET;
     understand persistence, retries, and job ownership.
--   **Message-broker concepts:** Queues vs. topics/pub-sub, competing
-    consumers, delivery acknowledgements, dead-letter queues, and back
-    pressure.
+-   **Message-broker concepts:** Queues vs. topics/pub-sub, competing
+    consumers, delivery acknowledgements, dead-letter queues (where messages that
+    keep failing are parked), and back pressure (slowing producers when
+    consumers cannot keep up).
 -   **Choose a broker by workload:**
     -   **RabbitMQ:** Broker-based routing and work queues.
     -   **Kafka:** Durable event streams, partitions, consumer groups,
@@ -191,16 +214,18 @@ Use this roadmap to plan preparation across .NET runtime, C#, APIs, data, archit
 -   **Delivery semantics:** At-most-once, at-least-once, and practical
     implications; design consumers to be idempotent.
 -   **Outbox and inbox patterns:** Persist business changes and outgoing
-    events atomically; deduplicate incoming messages.
+    events atomically; deduplicate incoming messages. (Outbox: write the event to a table in
+    the same transaction as the data, then publish it separately, so you
+    never save data without the event or vice versa.)
 -   **Ordering and schema evolution:** Partitioning/session keys, event
     contracts, compatibility, and versioning.
 
 ### 9. Distributed Systems and Microservices
 
--   **Synchronous vs. asynchronous communication:** REST/gRPC for
+-   **Synchronous vs. asynchronous communication:** REST/gRPC for
     request-response; messages/events for decoupled workflows.
 -   **API gateway and reverse proxy:** Routing, cross-cutting policies,
-    YARP/Ocelot, and Azure API Management; avoid duplicating business
+    YARP/Ocelot (.NET reverse-proxy/gateway libraries), and Azure API Management; avoid duplicating business
     authorization only at the gateway.
 -   **Service discovery and networking:** DNS, platform-native
     discovery, health checks, and when a service mesh is justified.
@@ -208,9 +233,10 @@ Use this roadmap to plan preparation across .NET runtime, C#, APIs, data, archit
     circuit breakers, bulkheads, and carefully designed fallbacks. Avoid
     retry storms and retries for non-idempotent operations.
 -   **Distributed transactions:** Why ordinary database transactions do
-    not span independent services; Saga orchestration/choreography and
-    compensating actions; compare with 2PC, TCC, and consensus-backed
-    platforms.
+    not span independent services; Saga orchestration/choreography (a sequence of local transactions; a
+    coordinator drives it vs. services react to each other's events) and
+    compensating actions; compare with 2PC (two-phase commit), TCC (Try-Confirm-Cancel), and
+    consensus-backed platforms.
 -   **Consistency and failure modes:** Eventual consistency, duplicate
     delivery, partial failure, clock assumptions, and CAP trade-offs.
 -   **Event sourcing:** Store domain events as the source of truth only
@@ -218,7 +244,7 @@ Use this roadmap to plan preparation across .NET runtime, C#, APIs, data, archit
     justify its complexity. It is distinct from ordinary event-driven
     messaging.
 -   **Distributed caching:** `IMemoryCache`
-    vs. Redis/`IDistributedCache`, cache-aside, TTLs, invalidation,
+    vs. Redis/`IDistributedCache`, cache-aside, TTLs, invalidation,
     stampede prevention, and stale-data trade-offs.
 -   **Multi-tenancy:** Tenant isolation, tenant resolution, per-tenant
     authorization, and database/schema/shared-database trade-offs.
@@ -231,11 +257,12 @@ Use this roadmap to plan preparation across .NET runtime, C#, APIs, data, archit
     HTTP and messaging; use correlation IDs where useful.
 -   **OpenTelemetry:** Instrumentation, traces, metrics, exporters, and
     distributed request analysis.
--   **Health checks:** Liveness vs. readiness, dependency checks, and
+-   **Health checks:** Liveness vs. readiness, dependency checks, and
     avoiding overly aggressive health probes.
 -   **Failure diagnosis:** Use logs, metrics, traces, dumps, counters,
     and dependency telemetry together.
--   **Operational readiness:** SLOs, alert thresholds, incident
+-   **Operational readiness:** SLOs (service-level objectives, e.g. 99.9% of requests succeed),
+    alert thresholds, incident
     response, runbooks, graceful shutdown, and deployment rollback.
 
 ### 11. Cloud, Containers, and Delivery
@@ -252,10 +279,13 @@ Use this roadmap to plan preparation across .NET runtime, C#, APIs, data, archit
 -   **CI/CD:** Build/test/package/release pipelines, environment
     promotion, approvals, rollback, and artifact traceability.
 -   **Infrastructure as Code:** Bicep, Terraform, or ARM; repeatable
-    environments and drift management.
+    environments and drift management (detecting when live resources
+    differ from the code).
 -   **Configuration and secrets:** Separate configuration from images;
     avoid committing credentials or embedding secrets in containers.
--   **Deployment strategies:** Rolling, blue-green, and canary releases;
+-   **Deployment strategies:** Rolling (replace instances gradually), blue-green (switch traffic
+    between two full environments), and canary (send a small share of
+    traffic to the new version first) releases;
     database migration compatibility during rollouts.
 
 ### 12. Architecture and System Design Practice
@@ -264,8 +294,8 @@ Use this roadmap to plan preparation across .NET runtime, C#, APIs, data, archit
     constraints, assumptions, and measurable targets.
 -   **Capacity and bottleneck analysis:** Estimate traffic, storage,
     throughput, concurrency, and dependencies.
--   **Architecture trade-offs:** Simplicity vs. flexibility, consistency
-    vs. availability, synchronous vs. asynchronous flow, and operational
+-   **Architecture trade-offs:** Simplicity vs. flexibility, consistency
+    vs. availability, synchronous vs. asynchronous flow, and operational
     burden.
 -   **Data and integration design:** Ownership, boundaries, contracts,
     failure handling, and data lifecycle.

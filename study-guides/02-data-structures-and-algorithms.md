@@ -28,6 +28,12 @@ A comparison function `Compare(a, b)` should return:
 Prefer `CompareTo` or `Comparer<T>.Default.Compare` over subtracting values. `b - a` can overflow for integers.
 
 ```csharp
+int a = int.MaxValue, b = -1;
+int bad  = a - b;          // overflows and wraps to int.MinValue (negative): says "a before b", the opposite of the truth
+int good = a.CompareTo(b); // 1 (positive): a comes after b
+```
+
+```csharp
 int[] values = { 5, 3, 8, 1, 2 };
 
 Array.Sort(values);                                      // ascending
@@ -68,10 +74,12 @@ var employees = new List<Employee>
     new() { Name = "Zara", Age = 30, Salary = 95000m }
 };
 
-employees.Sort((x, y) => x.Age.CompareTo(y.Age)); // age ascending
-employees.Sort((x, y) => y.Salary.CompareTo(x.Salary)); // salary descending
+// Each Sort call re-sorts the whole list; the last one wins (these are alternatives, not a pipeline).
+employees.Sort((x, y) => x.Age.CompareTo(y.Age)); // age ascending: Amin(25), then Mina(30)/Zara(30) in unspecified order
+employees.Sort((x, y) => y.Salary.CompareTo(x.Salary)); // salary descending: Zara, Mina, Amin
 
-// Multiple criteria: age ascending, then name ascending
+// Multiple criteria: age ascending, then name ascending -> Amin(25), Mina(30), Zara(30)
+// (the age tie between Mina and Zara is broken by name)
 employees.Sort((x, y) =>
 {
     int byAge = x.Age.CompareTo(y.Age);
@@ -214,6 +222,18 @@ jobsMaxFirst.Enqueue(new Job("Critical", 10), 10);
 
 The queue does **not** promise sorted enumeration. Equal priorities do not guarantee FIFO order. Add a sequence number to the priority if stable tie-breaking is required.
 
+```csharp
+var q = new PriorityQueue<string, int>();
+q.Enqueue("A", 1); q.Enqueue("B", 1); q.Enqueue("C", 1);
+q.Dequeue();   // might return "B": equal priorities come out in no guaranteed order
+
+// Fix: priority becomes (priority, arrival number); ties now break by arrival
+var fifo = new PriorityQueue<string, (int Priority, long Seq)>();
+long seq = 0;
+fifo.Enqueue("A", (1, seq++)); fifo.Enqueue("B", (1, seq++)); fifo.Enqueue("C", (1, seq++));
+fifo.Dequeue(); // "A", then "B", then "C"
+```
+
 ##### Top-K pattern (keep the K largest numbers)
 
 Keep a min-heap of at most `k` elements; the root is the smallest among the retained largest values.
@@ -225,13 +245,15 @@ static int[] KLargest(int[] values, int k)
         throw new ArgumentOutOfRangeException(nameof(k));
     if (k == 0) return Array.Empty<int>();
 
-    var heap = new PriorityQueue<int, int>();
+    var heap = new PriorityQueue<int, int>();   // min-heap: root = smallest kept value
     foreach (int value in values)
     {
         heap.Enqueue(value, value);
         if (heap.Count > k)
-            heap.Dequeue();
+            heap.Dequeue();   // too many: drop the smallest, so only the k largest survive
     }
+    // Trace for values {4, 9, 2, 7}, k = 2:
+    //   add 4 -> {4}   add 9 -> {4,9}   add 2 -> {2,4,9} drop 2 -> {4,9}   add 7 -> {4,7,9} drop 4 -> {7,9}
 
     return heap.UnorderedItems
         .Select(item => item.Element)
@@ -276,7 +298,7 @@ int index = Array.BinarySearch(sorted, 7); // index 3 if found
 int missing = Array.BinarySearch(sorted, 6); // negative encoded insertion point
 ```
 
-The input must already be sorted with the same ordering used for the search. For insertion point when not found: `int insertionIndex = ~missing;`.
+The input must already be sorted with the same ordering used for the search. For insertion point when not found: `int insertionIndex = ~missing;`. In the example, 6 would sit at index 3 (between 5 and 7), so `Array.BinarySearch` returns `~3`, which is `-4`; `~(-4)` gives back `3`.
 
 #### 8. Interview patterns to recognize
 
@@ -294,12 +316,12 @@ The input must already be sorted with the same ordering used for the search. For
 
 1. Avoid `(a, b) => a - b` and `(a, b) => b - a` for general integer comparison because subtraction can overflow. Use `CompareTo`.
 2. `Array.Reverse` and `List<T>.Reverse` reverse the current order; they do not sort.
-3. `List<T>.Sort` and `Array.Sort` are not stable: equal items are not guaranteed to keep their original order.
-4. LINQ `OrderBy` is stable, but it creates an ordered sequence rather than sorting the source in place.
-5. A `PriorityQueue` is not fully sorted; only the next priority is guaranteed to be at the top.
-6. `Dictionary` and `HashSet` should not be relied on for sorted order.
-7. `LinkedList<T>` is not automatically faster than `List<T>`; locating the node is `O(n)` and arrays usually have better cache locality.
-8. For custom objects used as hash keys, ensure equality and hash-code behavior are consistent.
+3. `List<T>.Sort` and `Array.Sort` are not stable: equal items are not guaranteed to keep their original order. Example: sorting (Mina, 30) and (Zara, 30) by age may return Zara first even though Mina came first in the input, which matters if the list was already sorted by name.
+4. LINQ `OrderBy` is stable (equal items keep their input order), but it creates an ordered sequence rather than sorting the source in place: `list.OrderBy(x => x);` on its own changes nothing, you must use the returned sequence.
+5. A `PriorityQueue` is not fully sorted; only the next priority is guaranteed to be at the top. Do not `foreach` over it and expect sorted output; keep calling `Dequeue`.
+6. `Dictionary` and `HashSet` should not be relied on for sorted order (insertion order often appears to work today but is not guaranteed; use `SortedDictionary`/`SortedSet` if order matters).
+7. `LinkedList<T>` is not automatically faster than `List<T>`; locating the node is `O(n)` and arrays usually have better cache locality (neighbouring items sit together in memory, so the CPU cache works well).
+8. For custom objects used as hash keys, ensure equality and hash-code behavior are consistent. Bad: a class overrides `Equals` but not `GetHashCode`, so two "equal" objects land in different buckets and `dict.ContainsKey(equalCopy)` returns `false`. Good: override both (or use a `record`), based on the same fields.
 9. For a max-priority queue, a reversed comparer is safer than negating a priority that could be `int.MinValue`.
 10. In production code, choose clarity first and optimize after measuring; Big-O does not capture allocations, cache behavior, or constant factors.
 
@@ -467,6 +489,21 @@ Search(state):
 
 The undo step is essential when the same state is reused to explore another branch.
 
+```csharp
+// Generate all subsets of {1,2,3}: for each number, choose "include" then undo, then try "exclude"
+static void Subsets(int[] nums, int index, List<int> current, List<List<int>> result)
+{
+    if (index == nums.Length) { result.Add(new List<int>(current)); return; } // complete: save a COPY
+    current.Add(nums[index]);                       // make the choice (include)
+    Subsets(nums, index + 1, current, result);
+    current.RemoveAt(current.Count - 1);            // undo the choice (backtrack)
+    Subsets(nums, index + 1, current, result);      // other branch (exclude), starting from the restored state
+}
+// Order found: [1,2,3] [1,2] [1,3] [1] [2,3] [2] [3] []
+// Without the RemoveAt, every later branch would still contain earlier choices (wrong results).
+// Without the "new List" copy, all saved results would be the same list object, emptied at the end.
+```
+
 ##### Example: finding a path through a maze
 
 `S` is the start, `G` is the goal, `#` is a wall, and `.` is an open cell.
@@ -519,7 +556,7 @@ Remaining amount     Choice      Coins chosen
  0                    Done        5 coins total
 ```
 
-Here, repeatedly taking the largest coin that does not exceed the remaining amount gives a minimum-coin solution.
+Here, repeatedly taking the largest coin that does not exceed the remaining amount gives a minimum-coin solution. (The first column is the amount still to pay: after the 10 and the 5, `18 - 15 = 3` remains.)
 
 ##### Example B: a case where greedy fails
 
@@ -578,6 +615,18 @@ Fib(3) is calculated once and cached
 Later requests for Fib(3) reuse the cached value
 ```
 
+```csharp
+static long FibMemo(int n, Dictionary<int, long> cache)   // top-down: recursion + cache
+{
+    if (n <= 1) return n;
+    if (cache.TryGetValue(n, out long hit)) return hit;   // already computed: reuse
+    long value = FibMemo(n - 1, cache) + FibMemo(n - 2, cache);
+    cache[n] = value;                                     // save before returning
+    return value;
+}
+// FibMemo(5, new()) computes 2, 3, 4, 5 once each (about n calls) instead of about 2^n
+```
+
 ##### C# example: bottom-up DP
 
 ```csharp
@@ -592,6 +641,7 @@ static long Fibonacci(int n)
     long previous = 0; // F(0)
     long current = 1;  // F(1)
 
+    // Trace for n = 5:  i=2 -> (1,1)  i=3 -> (1,2)  i=4 -> (2,3)  i=5 -> (3,5)  returns 5
     for (int i = 2; i <= n; i++)
     {
         long next = previous + current;
@@ -1021,7 +1071,7 @@ static char? FirstUnique(string s)
 
 ##### 4. Find two array numbers that sum to a target *(PDF p.22)*
 
-Return the first pair of values encountered; return `false` if none exists.
+Return the first pair of values encountered; return `false` if none exists. Trace for `a = {2, 7, 11}`, `target = 9`: `x=2`, complement 7 not seen, seen={2}; `x=7`, complement 2 is in seen, so the pair is (2, 7).
 
 ```csharp
 static bool TryTwoSum(int[] a, int target, out int first, out int second)
@@ -1062,7 +1112,7 @@ Use the character-frequency method from [the scenario answer](#check-whether-two
 
 ##### 7. Maximum sum of a contiguous subarray of size `k` *(PDF p.22)*
 
-Fixed-size sliding window, `O(n)` time, `O(1)` space. Require `1 <= k <= a.Length`.
+Fixed-size sliding window, `O(n)` time, `O(1)` space. Require `1 <= k <= a.Length`. Idea: when the window moves one step right, add the new element and subtract the one that left, instead of re-summing. Trace for `a = {1, 4, 2, 10, 3}`, `k = 2`: first window 1+4 = 5; slide: 5+2-1 = 6 ([4,2]); 6+10-4 = 12 ([2,10]); 12+3-2 = 13 ([10,3]); best = 13.
 
 ```csharp
 static long MaxWindowSum(int[] a, int k)
@@ -1082,7 +1132,7 @@ static long MaxWindowSum(int[] a, int k)
 
 ##### 8. Sort an array containing three unique values; bubble and insertion sorts *(PDF p.22)*
 
-For values `lowValue`, `midValue`, `highValue`, the Dutch National Flag partition is linear:
+For values `lowValue`, `midValue`, `highValue`, the Dutch National Flag partition is linear. Three zones are maintained: everything before `low` is a low value, everything after `high` is a high value, and `i` scans the unknown middle. Trace for `{2,0,1,0,2}` with values 0,1,2: `i=0` sees 2, swap with `high` -> `{2,0,1,0,2}`, high=3; `i=0` sees 2 again, swap with `a[3]` -> `{0,0,1,2,2}`, high=2; `i=0` sees 0, swap with itself, low=1, i=1; sees 0, low=2, i=2; sees 1, i=3 > high, done: `{0,0,1,2,2}`. (`i` does not advance after a high swap because the swapped-in element has not been checked yet.)
 
 ```csharp
 static void SortThreeValues(int[] a, int lowValue, int midValue, int highValue)
@@ -1137,7 +1187,7 @@ static void InsertionSort(int[] a)
 
 ##### 9. Validate parentheses/brackets *(PDF p.22)*
 
-Check matching `()`, `[]`, `{}` using a stack; any other character is ignored.
+Check matching `()`, `[]`, `{}` using a stack; any other character is ignored. Idea: every closer must match the most recent unmatched opener. Trace for `"{[]}"`: push `{`, push `[`, `]` pops `[` (match), `}` pops `{` (match), stack empty, so valid. For `"(]"`: `]` pops `(`, mismatch, so invalid.
 
 ```csharp
 static bool HasValidBrackets(string s)
@@ -1212,7 +1262,7 @@ The source recommends checking differences, differences of differences, alternat
 
 ##### 12. Move zeroes to the end of an array *(PDF p.22)*
 
-Stable, in-place `O(n)` solution; nonzero order is preserved:
+Stable, in-place `O(n)` solution; nonzero order is preserved. `read` scans every element, `write` marks where the next nonzero goes. Trace for `{0,1,0,3}`: read 1 -> `a[0]=1` (write=1); read 3 -> `a[1]=3` (write=2); then fill the rest with zeros: `{1,3,0,0}`.
 
 ```csharp
 static void MoveZerosToEnd(int[] a)
@@ -1249,11 +1299,11 @@ static void ReverseRange(int[] a, int l, int r)
 }
 ```
 
-For left rotation, reverse the first `k`, the remainder, then the whole array; right rotation is equivalent to left rotation by `n-k`.
+For left rotation, reverse the first `k`, the remainder, then the whole array; right rotation is equivalent to left rotation by `n-k`. Trace for `{1,2,3,4,5}`, left by 2: reverse first 2 -> `{2,1,3,4,5}`; reverse the rest -> `{2,1,5,4,3}`; reverse all -> `{3,4,5,1,2}`.
 
 ##### 14. Longest substring without repeating characters *(PDF p.22)*
 
-Sliding window, `O(n)` time:
+Sliding window, `O(n)` time. The window is `s[start..i]` and never contains a repeat; `last` remembers each character's most recent index so `start` can jump just past a repeat. Trace for `"abcabcbb"`: the window grows to `abc` (length 3); at `i=3` the `a` was last at index 0 >= start, so start=1 (window `bca`); the window keeps sliding like this and the best stays 3.
 
 ```csharp
 static int LongestUniqueSubstringLength(string s)
@@ -1410,7 +1460,7 @@ Group by the columns that define a duplicate and use `HAVING COUNT(*) > 1`; see 
 
 ##### 26. Count contiguous subarrays whose product is less than `K` *(PDF p.23)*
 
-For positive integers, use a sliding window. Example `[1,2,3,4]`, `K=10` returns `7` (the seven subarrays listed in the PDF). Time is `O(n)`.
+For positive integers, use a sliding window (shrink from the left while the product would reach `K`; every subarray ending at `right` and starting at or after `left` then qualifies, which is `right - left + 1` new subarrays). Example `[1,2,3,4]`, `K=10` returns `7` (the seven subarrays listed in the PDF). Time is `O(n)`.
 
 ```csharp
 static long CountProductsBelowK(int[] a, long k)

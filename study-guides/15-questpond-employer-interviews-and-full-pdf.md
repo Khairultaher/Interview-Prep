@@ -155,11 +155,11 @@ Service discovery locates healthy service instances dynamically as instances sca
 10. **Q (p. 28): What is the difference between COMMIT, ROLLBACK, and SAVEPOINT?**  
     **A:** `COMMIT` makes a transaction's changes durable; `ROLLBACK` undoes uncommitted changes; a savepoint marks a point to which part of a transaction can be rolled back.
 11. **Q (p. 28): What is the difference between `@@IDENTITY` and `SCOPE_IDENTITY()`?**  
-    **A:** `@@IDENTITY` returns the last identity generated in the session, including by a trigger. `SCOPE_IDENTITY()` restricts the result to the current scope and is generally safer after an insert.
+    **A:** `@@IDENTITY` returns the last identity generated in the session, including by a trigger. `SCOPE_IDENTITY()` restricts the result to the current scope and is generally safer after an insert. Example: `INSERT INTO Orders` fires a trigger that inserts into `AuditLog` (which also has an identity column); `@@IDENTITY` returns the `AuditLog` id (wrong), `SCOPE_IDENTITY()` returns the `Orders` id (what you wanted).
 12. **Q (p. 28): What are materialized views?**  
     **A:** They persist the result of a query for faster reads. In SQL Server, indexed views materialize results and require specific definitions and maintenance.
 13. **Q (p. 28): What is the difference between RANK, DENSE_RANK, and “Entile” (likely NTILE)?**  
-    **A:** `RANK` leaves gaps after ties; `DENSE_RANK` does not; `NTILE(n)` divides ordered rows into up to *n* approximately equal buckets. “Entile” appears to be a source typo for `NTILE`.
+    **A:** `RANK` leaves gaps after ties; `DENSE_RANK` does not (salaries 90, 80, 80, 70 give RANK 1, 2, 2, 4 but DENSE_RANK 1, 2, 2, 3); `NTILE(n)` divides ordered rows into up to *n* approximately equal buckets. “Entile” appears to be a source typo for `NTILE`.
 14. **Q (p. 28): What are the different types of NoSQL databases?**  
     **A:** Key-value, document, wide-column, and graph databases are common categories; some systems are multi-model.
 15. **Q (p. 28): Why choose NoSQL over SQL?**  
@@ -186,7 +186,7 @@ Prompts are in the PDF order. The source labels this group “Accenture (1st Rou
 #### C# (p. 32)
 
 - **Q: Swap two values without a third variable.**  
-  **A:** For integers: `a ^= b; b ^= a; a ^= b;`. In production, a temporary variable or tuple deconstruction (`(a,b)=(b,a)`) is clearer and avoids arithmetic overflow.
+  **A:** For integers: `a ^= b; b ^= a; a ^= b;` (XOR each pair: with a=5, b=3, after step 1 a=6, after step 2 b=5, after step 3 a=3). The other classic trick, `a = a + b; b = a - b; a = a - b;`, can overflow for large values (the XOR version cannot). The XOR trick fails if both names refer to the same storage (e.g. `Swap(ref x, ref x)` zeroes it). In production use a temporary variable or tuple deconstruction (`(a, b) = (b, a)`), which is clearer.
 - **Q: What are delegates?**  
   **A:** Type-safe references to methods; used for callbacks and events. Built-ins include `Action`, `Func`, and `Predicate`.
 - **Q: What is asynchronous programming?**  
@@ -239,7 +239,7 @@ The source heading is “Capgemini Azure Lead” (p. 38).
 - **Q: How do you deploy APIM in multiple regions with budget constraints?**  
   **A:** Confirm latency/availability requirements and APIM tier capabilities, then compare regional units, gateways, and traffic routing costs. Use a primary region if requirements permit; monitor failover and avoid overprovisioning.
 - **Q: How do you handle deduplication in Service Bus?**  
-  **A:** Enable duplicate detection with a stable `MessageId` within its configured window, and retain idempotency in consumers because detection is bounded and does not replace safe processing.
+  **A:** Enable duplicate detection with a stable `MessageId` (e.g. the order ID, set by the producer) within its configured window (default 10 minutes): Service Bus then silently drops a second message with the same ID. Retain idempotency in consumers because detection is bounded (a duplicate arriving after the window is delivered) and does not replace safe processing.
 - **Q: How do you ensure message reliability in Service Bus?**  
   **A:** Use durable entities, peek-lock processing, idempotent handlers, bounded retries, dead-letter inspection, duplicate detection as needed, and monitoring; design producer transaction/outbox behavior when necessary.
 - **Q: Backend service is inside a VNet/private endpoint but APIM APIs are public. How do you ensure connectivity?**  
@@ -247,7 +247,7 @@ The source heading is “Capgemini Azure Lead” (p. 38).
 - **Q: Can an App Service Plan for Azure Functions always provide pre-warmed instances?**  
   **A:** It depends on the hosting plan and scale settings. Premium plans support pre-warmed instances; configure minimum/prewarmed capacity and validate cold-start and cost behavior. Consumption plans do not guarantee an always-warm instance.
 - **Q: How do partition keys work in Cosmos DB?**  
-  **A:** A partition key distributes items and defines logical partitions; choose a high-cardinality, evenly distributed key aligned with common queries and transactional boundaries to avoid hot partitions.
+  **A:** A partition key distributes items and defines logical partitions; choose a high-cardinality, evenly distributed key aligned with common queries and transactional boundaries to avoid hot partitions (one partition receiving most of the traffic; each logical partition has its own throughput and 20 GB-class size limits, so the rest of the provisioned capacity is wasted and requests get throttled with `429`). Bad key: `country` when 80% of users are in one country, or a date when all writes are "today". Good key: `userId` or `tenantId` with many roughly equal values.
 - **Q: What are replay tools?**  
   **A:** Tools/processes that re-send captured requests or messages to reproduce and diagnose behavior. Use sanitized data, controlled environments, idempotency, and avoid replaying production side effects unintentionally.
 ---
@@ -261,7 +261,7 @@ The PDF uses the headings “CapGemini” and “Capgemini Azure Lead”; these 
 #### CapGemini — 5 years' experience (p. 37)
 
 - **Q: Explain D in SOLID with a written example.**  
-  **A:** Dependency Inversion: high-level policy depends on abstractions, not concrete infrastructure. Example: `OrderService(IOrderRepository repository)` depends on an interface; a SQL implementation is injected at composition.
+  **A:** Dependency Inversion: high-level policy depends on abstractions, not concrete infrastructure. Bad: `OrderService` does `new SqlOrderRepository()` inside itself, so it cannot be tested or switched to another database without editing it. Good: `OrderService(IOrderRepository repository)` depends on an interface; the SQL implementation is injected at composition (`services.AddScoped<IOrderRepository, SqlOrderRepository>()`), and tests pass a fake.
 - **Q: Describe a design pattern you implemented (source example: Singleton).**  
   **A:** Explain the actual problem and trade-off. A Singleton centralizes one instance; in .NET, DI singleton registration is usually safer and clearer, while mutable state and test coupling are risks.
 - **Q: How do you pass data between controllers?**  
@@ -271,17 +271,17 @@ The PDF uses the headings “CapGemini” and “Capgemini Azure Lead”; these 
 - **Q: What is `Bundles.config`?**  
   **A:** In older ASP.NET MVC, it configured CSS/JavaScript bundling and minification. Modern ASP.NET Core commonly uses frontend build tooling or static asset pipelines instead.
 - **Q: How do you implement caching?**  
-  **A:** Choose a cache layer and key/TTL/invalidation policy, avoid caching user-sensitive data incorrectly, handle stampedes, and measure hit rate and staleness.
+  **A:** Choose a cache layer and key/TTL/invalidation policy, avoid caching user-sensitive data incorrectly (include user/tenant in the key, otherwise user B can be served user A's data), handle stampedes (a hot entry expires and many requests rebuild it at once; fix with request coalescing or jittered TTLs, see the caching section of the system design guide), and measure hit rate and staleness.
 - **Q: Difference between List and Dictionary?**  
   **A:** `List<T>` is ordered by index and allows duplicates; `Dictionary<TKey,TValue>` provides key-based lookup with unique keys.
 - **Q: How do you implement JWT security?**  
-  **A:** Use a trusted issuer and secure signing keys, validate issuer/audience/signature/expiry, apply authorization policies, use HTTPS, and never store secrets in token claims.
+  **A:** Use a trusted issuer and secure signing keys, validate issuer/audience/signature/expiry, apply authorization policies, use HTTPS, and never store secrets in token claims (the payload is only Base64-encoded, not encrypted, so anyone holding the token can read it).
 - **Q: What are API return types?**  
   **A:** `ActionResult<T>` or `IActionResult` supports typed payloads and status results; return clear status codes and DTOs.
 - **Q: How do you handle application-level exceptions?**  
   **A:** Central middleware catches unexpected errors, logs diagnostics with a trace ID, and returns safe Problem Details; explicitly map expected domain failures.
 - **Q: SQL query for 2nd highest salary.**  
-  **A:** `SELECT salary FROM (SELECT salary,DENSE_RANK() OVER(ORDER BY salary DESC) r FROM Employee) x WHERE r=2;` This returns the second distinct salary.
+  **A:** `SELECT salary FROM (SELECT salary,DENSE_RANK() OVER(ORDER BY salary DESC) r FROM Employee) x WHERE r=2;` This returns the second distinct salary (salaries 100, 100, 80 return 80; `ROW_NUMBER` would wrongly return 100 and `RANK` would return nothing, since ranks are 1, 1, 3).
 - **Q: Delete one of the duplicate records in SQL.**  
   **A:** Identify duplicates with `ROW_NUMBER() OVER (PARTITION BY business_key ORDER BY id)` and delete rows where `rn > 1`, inside a reviewed transaction. Define which row to retain.
 - **Q: How can you optimize query performance?**  
@@ -291,13 +291,13 @@ The PDF uses the headings “CapGemini” and “Capgemini Azure Lead”; these 
 - **Q: Explain Angular interpolation binding.**  
   **A:** `{{ expression }}` renders a component expression as text in a template; Angular escapes text output rather than treating it as HTML.
 - **Q: Explain pure and impure pipes.**  
-  **A:** A pure pipe runs when its primitive input or object reference changes; an impure pipe runs frequently during change detection and can be expensive.
+  **A:** A pure pipe runs only when its primitive input or object reference changes; an impure pipe (`pure: false`) runs on every change-detection cycle (roughly every event) and can be expensive. Gotcha: with a pure pipe, `items.push(x)` does not re-run it because the array reference is unchanged; assign a new array (`items = [...items, x]`) instead.
 - **Q: Give duplicates from a list using LINQ.**  
   **A:** `var duplicates = values.GroupBy(x => x).Where(g => g.Count() > 1).Select(g => g.Key);`
 - **Q: Explain SQL joins.**  
   **A:** Joins combine rows by a condition; inner joins keep matches, outer joins also retain unmatched rows from selected sides, and cross join forms combinations.
 - **Q (p. 37): What is the output of `SELECT * FROM Employees WHERE 1=0`?**  
-  **A:** No rows, because the predicate is always false; the result still has the selected columns.
+  **A:** No rows, because the predicate is always false; the result still has the selected columns (the table's column structure). This is a common trick to inspect a table's shape or copy its structure without data (`SELECT * INTO NewTable FROM Employees WHERE 1=0`).
 - **Q: Abstract class vs interface?**  
   **A:** An abstract class can hold state and shared implementation but only one base class can be inherited; a class can implement multiple interfaces that define contracts (and may include default members).
 ---
@@ -352,7 +352,7 @@ The PDF uses the headings “CapGemini” and “Capgemini Azure Lead”; these 
 #### .NET / API (pp. 33–34)
 
 - **Q: Explain DI and its lifetimes.**  
-  **A:** Register abstractions and inject dependencies; transient is per resolution, scoped per request/scope, singleton per container. Avoid lifetime capture errors.
+  **A:** Register abstractions and inject dependencies; transient is per resolution (a new object every time it is injected), scoped per request/scope (one object shared within one HTTP request), singleton per container (one object for the app's lifetime). Avoid lifetime capture errors (captive dependency): a singleton that injects a scoped service (e.g. `DbContext`) keeps the first request's instance forever, so it is reused across requests and threads, giving stale data and thread-safety bugs. A longer-lived service must not depend on a shorter-lived one.
 - **Q: Explain async/await.**  
   **A:** Await task-based operations without blocking threads during I/O; propagate cancellation and errors and avoid `.Result`/`.Wait()`.
 - **Q: Authentication vs authorization?**  
@@ -379,7 +379,7 @@ The PDF uses the headings “CapGemini” and “Capgemini Azure Lead”; these 
 - **Q: What are join types?**  
   **A:** `INNER`, `LEFT`, `RIGHT`, `FULL OUTER`, and `CROSS`; choose based on which unmatched rows must remain.
 - **Q: How do you load parent-child data in EF?**  
-  **A:** Use `Include`/`ThenInclude` for eager loading, explicit loading when requested, or project to a DTO. Avoid N+1 queries and excessive joins.
+  **A:** Use `Include`/`ThenInclude` for eager loading, explicit loading when requested, or project to a DTO. Avoid N+1 queries (loading 100 parents, then running 1 query per parent for its children = 101 queries; `Include` makes it 1 or 2) and excessive joins (loading several large child collections in one query multiplies rows; consider `AsSplitQuery()`).
 - **Q: How do you handle a scoped DB connection expiring?**  
   **A:** Do not cache connections beyond their unit of work; open/use/dispose through the provider pool, configure timeouts/retries for transient faults, and retry only safe operations.
 
@@ -432,7 +432,7 @@ The PDF uses the headings “CapGemini” and “Capgemini Azure Lead”; these 
 - **Q: What is NUnit?**  
   **A:** A .NET unit-testing framework with test attributes, assertions, setup/teardown, and parameterized tests.
 - **Q: Mocking vs stubbing?**  
-  **A:** A stub supplies predetermined responses; a mock additionally verifies expected interactions. Use test doubles only where they isolate a meaningful boundary.
+  **A:** A stub supplies predetermined responses (e.g. a fake `IPriceService` that always returns 10, so you assert on the result); a mock additionally verifies expected interactions (e.g. assert that `IEmailSender.Send` was called exactly once). Use test doubles only where they isolate a meaningful boundary.
 ---
 
 ## EPAM
@@ -491,9 +491,9 @@ The source includes assessment notes as well as interview prompts. The notes bel
 - **Assessment topic (p. 42): `Parallel.ForEach` and multithreading.**  
   **A:** Use it for independent CPU-bound iterations, control concurrency, and ensure thread-safe shared state; it is not the default for asynchronous I/O.
 - **Assessment topic (p. 42): `ref` vs `out`.**  
-  **A:** `ref` requires a prior value; `out` requires assignment by the callee before return.
+  **A:** `ref` requires a prior value (the caller must initialize the variable, and the method may read and change it); `out` requires assignment by the callee before return (the caller need not initialize it; e.g. `int.TryParse(s, out var n)`).
 - **Assessment topic (p. 42): Structured try/catch/finally.**  
-  **A:** Catch only errors that can be handled meaningfully, preserve stack traces with `throw;`, and place cleanup in `finally` or `using`.
+  **A:** Catch only errors that can be handled meaningfully, preserve stack traces with `throw;` (rethrows the original, keeping where it failed; `throw ex;` resets the stack trace to the current line and hides the real origin), and place cleanup in `finally` or `using`.
 - **Assessment topic (p. 42): Aggregate sales by `ProductId` using LINQ.**  
   **A:** `var totals = sales.GroupBy(x => x.ProductId).Select(g => new { ProductId=g.Key, Total=g.Sum(x => x.Amount) });`
 - **Assessment topic (p. 42): LINQ filtering, grouping, aggregation, projection.**  
@@ -509,13 +509,13 @@ The source includes assessment notes as well as interview prompts. The notes bel
 - **Assessment topic (p. 42): EF Code First and migrations.**  
   **A:** Define the model in code, generate reviewed schema migrations, and apply them through a controlled deployment process.
 - **Assessment topic (p. 42): EF tracking vs no-tracking queries.**  
-  **A:** Tracking enables change detection but costs memory/CPU; `AsNoTracking` is generally preferable for read-only projections/entities.
+  **A:** Tracking enables change detection (EF remembers each loaded entity's original values so `SaveChanges` can find what changed) but costs memory/CPU; `AsNoTracking` is generally preferable for read-only projections/entities (e.g. a list page loading 10,000 rows that will never be saved).
 - **Assessment topic (p. 42): EF architecture and real-time usage scenarios.**  
   **A:** EF Core maps entities and LINQ expressions to provider queries; use it for productive domain persistence, while profiling query translation and selecting lower-level access for specialized hot paths.
 - **Assessment topic (p. 42): SQL `WHERE` vs `HAVING` and execution order.**  
-  **A:** `WHERE` filters rows before grouping; `HAVING` filters aggregates/groups. Conceptually, `FROM`/`JOIN`, `WHERE`, `GROUP BY`, `HAVING`, `SELECT`, then `ORDER BY`.
+  **A:** `WHERE` filters rows before grouping; `HAVING` filters aggregates/groups. Example: `SELECT DeptId, COUNT(*) FROM Emp WHERE Active=1 GROUP BY DeptId HAVING COUNT(*) > 5` keeps only active employees first, then keeps departments with more than 5 of them; `WHERE COUNT(*) > 5` is invalid because the count does not exist yet at the `WHERE` step. Conceptually, `FROM`/`JOIN`, `WHERE`, `GROUP BY`, `HAVING`, `SELECT`, then `ORDER BY`.
 - **Assessment topic (p. 43): SQL NULL comparisons and function behavior.**  
-  **A:** `NULL` means unknown; test it with `IS NULL`, not `= NULL`. Functions may propagate NULL; use `COALESCE` or another explicit policy.
+  **A:** `NULL` means unknown; test it with `IS NULL`, not `= NULL` (any comparison with NULL, even `NULL = NULL`, is unknown, not true, so `WHERE Phone = NULL` returns no rows). Functions may propagate NULL (`'Hi ' + NULL` is NULL, `5 + NULL` is NULL); use `COALESCE` or another explicit policy.
 - **Assessment topic (p. 43): Structure an UPDATE with CASE.**  
   **A:** `UPDATE T SET Value = CASE WHEN condition THEN new_value ELSE Value END WHERE ...;` Limit rows with a deliberate predicate and test the affected set.
 - **Assessment topic (p. 43): AAA, mocking, unit vs integration tests.**  
@@ -597,7 +597,7 @@ The source includes assessment notes as well as interview prompts. The notes bel
 - **Q (p. 46): What is a concurrent list vs a normal list?**  
   **A:** `List<T>` is not thread-safe for concurrent mutation. Use `ConcurrentBag<T>`, `ConcurrentQueue<T>`, or a lock/concurrent design based on required ordering and operations.
 - **Q (p. 46): Difference between `.Result` and `ConfigureAwait`?**  
-  **A:** `.Result` synchronously blocks on a task and can cause deadlocks/starvation; `ConfigureAwait(false)` controls whether a continuation captures a synchronization context and does not itself block.
+  **A:** `.Result` synchronously blocks on a task and can cause deadlocks/starvation; `ConfigureAwait(false)` controls whether a continuation captures a synchronization context and does not itself block. Deadlock scenario (UI apps and classic ASP.NET, which have a synchronization context that runs one piece of code at a time): the caller blocks on `GetAsync().Result` while holding the context; the awaited method finishes and wants to resume on that same context, but it is blocked, so each waits for the other forever. `ConfigureAwait(false)` in library code lets the continuation resume on any thread and avoids this; ASP.NET Core has no such context, but `.Result` still wastes a thread (starvation). They solve different problems: the fix is `await`, not choosing between them.
 - **Q (p. 46): What are possible approaches to connect to SQL?**  
   **A:** Use ADO.NET/SqlClient directly, an ORM such as EF Core, or a micro-ORM such as Dapper; parameterize queries, manage connections safely, and choose by query/control needs.
 - **Q (p. 46): How do you scale a database as the application scales?**  
@@ -605,15 +605,15 @@ The source includes assessment notes as well as interview prompts. The notes bel
 - **Q (p. 46): How do you ensure connection pooling?**  
   **A:** Reuse provider-managed pools, use short-lived connections disposed promptly, keep connection strings consistent, and configure pool limits/timeouts appropriate to load.
 - **Q (p. 46): During load testing of pooling, what issues are common?**  
-  **A:** Pool exhaustion, connection leaks, long-held transactions, timeouts, server connection limits, and latency spikes. Inspect active connections and ensure disposal and bounded concurrency.
+  **A:** Pool exhaustion (all connections in use, so new requests wait and then fail with "timeout expired... max pool size was reached"), connection leaks (code opens a connection and never disposes it, so it is never returned to the pool; fix with `using`/`await using`), long-held transactions (a connection kept busy while waiting on a remote call), timeouts, server connection limits, and latency spikes. Inspect active connections and ensure disposal and bounded concurrency.
 - **Q (p. 46): Have you used LINQ?**  
   **A:** Explain practical use for filtering, projection, grouping, and aggregation; distinguish LINQ-to-Objects from provider-translated LINQ and inspect generated SQL where relevant.
 - **Q (p. 46): `IEnumerable` vs `IQueryable`—difference and when to use?**  
-  **A:** `IEnumerable` executes iteration in memory; `IQueryable` builds an expression for a provider such as EF to translate. Keep filtering/projection server-side until materialization.
+  **A:** `IEnumerable` executes iteration in memory; `IQueryable` builds an expression for a provider such as EF to translate. Keep filtering/projection server-side until materialization. Bad: `IEnumerable<Order> all = db.Orders; all.Where(o => o.Total > 100)` loads every row, then filters in C#. Good: `db.Orders.Where(o => o.Total > 100)` stays `IQueryable` and becomes `WHERE Total > 100` in SQL.
 - **Q (p. 46): What have you worked on in SQL Server?**  
   **A:** Tailor to real experience; discuss schema/query work, transactions, indexing, execution plans, performance measurement, and safe deployment rather than overstating expertise.
 - **Q (p. 46): Explain scalar functions with a scenario.**  
-  **A:** A scalar function returns one value per invocation, for example normalizing a code. In large queries, scalar functions can affect performance; prefer inline expressions or inline TVFs when appropriate.
+  **A:** A scalar function returns one value per invocation, for example normalizing a code. In large queries, scalar functions can affect performance (a user-defined scalar function is traditionally called once per row, so over 1 million rows it runs 1 million times, and it can force the query to run single-threaded); prefer inline expressions or inline TVFs (table-valued functions, which the optimizer expands into the query like a view) when appropriate.
 - **Q (p. 47): How do you check why a query is taking time—execution plan or SQL Profiler?**  
   **A:** Start with Query Store and actual execution plans, IO/time statistics, and wait analysis. Profiler is legacy and can add overhead; use Extended Events for targeted tracing.
 - **Q (p. 47): What is a CTE? Explain a scenario.**  
@@ -847,7 +847,7 @@ The PDF spells the heading “Mhpasis.” This file normalizes the filename/name
 - **Q: What is middleware?**  
   **A:** A request/response pipeline component that can call next or terminate the pipeline.
 - **Q: How do you create custom middleware?**  
-  **A:** Implement `Invoke`/`InvokeAsync(HttpContext, RequestDelegate)` (or use `IMiddleware`), register it in the pipeline with `UseMiddleware<T>()`, and call `next` when continuing.
+  **A:** Convention-based: a class whose constructor takes `RequestDelegate next` and which has `InvokeAsync(HttpContext context)`; or implement `IMiddleware`, whose method is `InvokeAsync(HttpContext context, RequestDelegate next)` (it must also be registered in DI). Register it in the pipeline with `UseMiddleware<T>()`, and call `next` when continuing.
 - **Q: `app.Use()` vs `app.Run()`?**  
   **A:** `Use` can call the next middleware; `Run` is terminal and does not receive a next delegate.
 - **Q: What are query parameters?**  
@@ -897,9 +897,9 @@ The PDF spells the heading “Mhpasis.” This file normalizes the filename/name
 - **Q: CTE vs temporary table?**  
   **A:** A CTE is scoped to one statement and is a query expression; a temp table is materialized in `tempdb`, can be reused/indexed across statements, and has different statistics/storage behavior.
 - **Q: What are window functions?**  
-  **A:** Functions such as `ROW_NUMBER`, `RANK`, `LAG`, or `SUM() OVER(...)` compute values across related rows without collapsing them into one row per group.
+  **A:** Functions such as `ROW_NUMBER`, `RANK`, `LAG`, or `SUM() OVER(...)` compute values across related rows without collapsing them into one row per group. Example: `SUM(Amount) OVER (PARTITION BY CustomerId)` adds a per-customer total to every order row, whereas `GROUP BY CustomerId` would return one row per customer.
 - **Q: `RANK` vs `DENSE_RANK`?**  
-  **A:** Both assign equal ranks to ties; `RANK` leaves gaps after ties, while `DENSE_RANK` does not.
+  **A:** Both assign equal ranks to ties; `RANK` leaves gaps after ties, while `DENSE_RANK` does not. Scores 90, 80, 80, 70: `RANK` = 1, 2, 2, 4; `DENSE_RANK` = 1, 2, 2, 3.
 
 #### 2nd round (pp. 40–41)
 
@@ -908,7 +908,7 @@ The PDF spells the heading “Mhpasis.” This file normalizes the filename/name
 - **Q (p. 40): Tell me about your current project, tech stack, and modules worked on.**  
   **A:** Explain the system's purpose, architecture and stack, the module you owned, interfaces, and impact.
 - **Q (p. 40): Write a controller showing Repository Pattern using DI and Entity Framework.**  
-  **A:** Define `IItemRepository`, inject it into the controller, and keep the EF `DbContext` in the repository/service: `[HttpGet] public async Task<ActionResult<IReadOnlyList<ItemDto>>> Get() => Ok(await repo.GetAllAsync());`. Keep query logic testable and avoid an unnecessary generic repository wrapper.
+  **A:** Define `IItemRepository`, inject it into the controller, and keep the EF `DbContext` in the repository/service: `[HttpGet] public async Task<ActionResult<IReadOnlyList<ItemDto>>> Get() => Ok(await repo.GetAllAsync());` (assumes the controller received `IItemRepository repo` via its constructor and `GetAllAsync` returns `IReadOnlyList<ItemDto>`; registration: `services.AddScoped<IItemRepository, EfItemRepository>()`). Keep query logic testable and avoid an unnecessary generic repository wrapper.
 - **Q (p. 40): Which DI lifetimes did you use in your project?**  
   **A:** Typically DbContext/repositories are scoped per request, stateless lightweight services transient or scoped, and truly shared thread-safe services singleton. Explain actual registrations and lifetime constraints.
 - **Q (p. 40): How would you write unit tests for this?**  
@@ -924,7 +924,7 @@ The PDF spells the heading “Mhpasis.” This file normalizes the filename/name
 - **Q (p. 41): Explain how JWT tokens work.**  
   **A:** The issuer signs header/claims; clients send the token as a bearer credential; APIs validate signature and standard claims before authorization. Signed JWT contents are readable unless encrypted.
 - **Q (p. 41): Have you used CORS and how does it work? What requests does it block?**  
-  **A:** CORS is a browser-enforced cross-origin policy signaled by response headers. A preflight `OPTIONS` check is used for certain non-simple requests; CORS does not block server-to-server traffic or replace authentication.
+  **A:** CORS is a browser-enforced cross-origin policy signaled by response headers: a page at `https://app.example.com` calling `https://api.example.com` is blocked by the browser from reading the response unless the API sends `Access-Control-Allow-Origin` for that origin. A preflight `OPTIONS` check is used for certain non-simple requests; CORS does not block server-to-server traffic or replace authentication.
 - **Q (p. 41): What deployment methods have you used in your project?**  
   **A:** Describe the actual pipeline and hosting: build/test, artifact or image creation, environment configuration, staged/rolling or slot deployment, health verification, and rollback strategy.
 ---
@@ -1020,7 +1020,17 @@ Source heading: “Persistent Azure Dotnet Role” (pp. 38–39).
 #### Coding (p. 36)
 
 - **Q: Find the 3rd largest element using one loop.**  
-  **A:** Maintain `first`, `second`, `third`; for each value, skip duplicates if distinct rank is wanted, shift values when it exceeds a maximum, and at end handle fewer than three values. This is O(n) time, O(1) space.
+  **A:** Maintain `first`, `second`, `third` (start as `long.MinValue`); for each value, skip duplicates if distinct rank is wanted, shift values when it exceeds a maximum, and at end handle fewer than three values. This is O(n) time, O(1) space.
+
+  ```csharp
+  foreach (var x in nums) {
+      if (x == first || x == second || x == third) continue;           // distinct rank only
+      if (x > first)       { third = second; second = first; first = x; }
+      else if (x > second) { third = second; second = x; }
+      else if (x > third)  { third = x; }
+  }
+  // nums = {5, 9, 9, 7, 1}: first=9, second=7, third=5
+  ```
 
 #### API (p. 36)
 
@@ -1029,7 +1039,7 @@ Source heading: “Persistent Azure Dotnet Role” (pp. 38–39).
 - **Q: What is a REST API?**  
   **A:** An API organized around resources with stateless requests and standard HTTP methods/statuses and representations.
 - **Q: How do you execute requests in parallel?**  
-  **A:** For independent async operations, use `await Task.WhenAll(tasks)` with bounded concurrency, cancellation, and error handling; do not parallelize dependent operations.
+  **A:** For independent async operations, start the tasks first, then `await Task.WhenAll(tasks)`: `var a = GetAAsync(); var b = GetBAsync(); await Task.WhenAll(a, b);` (awaiting each call immediately would run them one after another). `WhenAll` itself does not limit concurrency; for many items bound it with `SemaphoreSlim` or `Parallel.ForEachAsync(..., new ParallelOptions { MaxDegreeOfParallelism = 8 }, ...)`. Add cancellation and error handling (`WhenAll` surfaces only the first exception when awaited); do not parallelize dependent operations.
 ---
 
 ## Last-letter alphabet coding question
@@ -1073,13 +1083,13 @@ Prompts are transcribed in their source order. The source contains a literal ell
 #### Resource management and security
 
 14. **What is a resource leak?** *(Source: p. 68.)*  
-    **Answer:** A resource such as a file handle, socket, database connection, or unmanaged memory remains held after it is no longer needed, eventually exhausting capacity or degrading performance.
+    **Answer:** A resource such as a file handle, socket, database connection, or unmanaged memory remains held after it is no longer needed, eventually exhausting capacity or degrading performance. Bad: `var conn = new SqlConnection(cs); conn.Open(); ... ` and an exception occurs before `conn.Close()`, so the connection is never returned to the pool; after about 100 such failures the pool is exhausted and every request times out. Good: `using var conn = new SqlConnection(cs);` disposes it on every path.
 15. **Why use the `using` keyword in C#?** *(Source: p. 68.)*  
     **Answer:** A `using` statement/declaration guarantees `Dispose()` runs when scope exits, including on exceptions, for `IDisposable` resources. `await using` does the same for `IAsyncDisposable`.
 16. **What is SQL injection and how do you prevent it?** *(Source: p. 68.)*  
-    **Answer:** Untrusted input changes the meaning of dynamically constructed SQL. Use parameterized queries/prepared statements or safe ORM parameters, validate/allowlist identifiers that cannot be parameterized, and apply least-privilege database permissions. Do not rely on string escaping as the primary defense.
+    **Answer:** Untrusted input changes the meaning of dynamically constructed SQL. Bad: `"SELECT * FROM Users WHERE Name = '" + name + "'"` with `name = "x' OR '1'='1"` returns every user (and `'; DROP TABLE Users;--` can destroy data). Good: `new SqlCommand("SELECT * FROM Users WHERE Name = @name")` with `cmd.Parameters.AddWithValue("@name", name)`, where the input is always treated as data, never as SQL. Use parameterized queries/prepared statements or safe ORM parameters, validate/allowlist identifiers that cannot be parameterized, and apply least-privilege database permissions. Do not rely on string escaping as the primary defense.
 17. **What is a race condition in banking transactions?** *(Source: p. 68.)*  
-    **Answer:** Concurrent operations read/update shared account state in an order that causes a lost update or violates a balance invariant—for example, two withdrawals both see the same available balance. Use atomic conditional updates, suitable isolation/locking or optimistic concurrency, and idempotency.
+    **Answer:** Concurrent operations read/update shared account state in an order that causes a lost update or violates a balance invariant—for example, two withdrawals both see the same available balance: balance 100; request A and request B each read 100, each withdraws 80 after checking `100 >= 80`, and both write back 20, so 160 left the account while the balance dropped by only 80. Use atomic conditional updates (`UPDATE Account SET Balance = Balance - 80 WHERE Id = @id AND Balance >= 80`, then check that 1 row was affected), suitable isolation/locking or optimistic concurrency (a version/rowversion column: the second writer's update matches 0 rows and must retry), and idempotency.
 18. **Why should we use database transactions?** *(Source: p. 68.)*  
     **Answer:** Transactions make related operations atomic and preserve consistency under failure and concurrency. Use the smallest appropriate transaction boundary; distributed services generally need a saga/outbox rather than a long cross-service database transaction.
 
@@ -1122,7 +1132,7 @@ Prompts are transcribed in their source order. The source contains a literal ell
 #### OAuth, asynchronous code, and Angular
 
 25. **How do you implement OAuth 2.0 security?** *(Source spells it “oath 2.o”; p. 69.)*  
-    **Answer:** Use a trusted authorization server and the appropriate flow (typically authorization code with PKCE for browser/native clients; client credentials for service-to-service). Validate issuer, audience, signature, expiry, and scopes at the API; use TLS, least privilege, secure token storage, and refresh-token rotation. OAuth is delegated authorization; use OpenID Connect when user authentication/identity is needed.
+    **Answer:** Use a trusted authorization server and the appropriate flow (typically authorization code with PKCE, Proof Key for Code Exchange, for browser/native clients: the app sends a hashed random secret with the login request and the original secret when redeeming the code, so a stolen code is useless to an attacker; client credentials for service-to-service). Validate issuer, audience, signature, expiry, and scopes at the API; use TLS, least privilege, secure token storage, and refresh-token rotation. OAuth is delegated authorization; use OpenID Connect when user authentication/identity is needed.
 26. **“Aync and await” — explain `async` and `await`.** *(Source: p. 69.)*  
     **Answer:** `async` enables a method to use `await` and normally return `Task`/`Task<T>`; `await` asynchronously observes a task's completion and propagates its result/error without blocking the current thread. It is most useful for I/O-bound work and does not itself create a thread.
 27. **Angular — auth guard and interceptor.** *(Source: p. 69.)*  
@@ -1197,10 +1207,10 @@ The two source groups below remain separate: the .NET Full Stack + AI 20+ LPA in
    **Answer:** `Convert.ToString(null)` returns an empty string (and supports `IFormatProvider` overloads); calling an instance's `.ToString()` when that reference is null throws `NullReferenceException`. `Convert.ToString` also handles nullable/object values more safely.
 
 6. **Differences among `First()`, `FirstOrDefault()`, `Single()`, and `SingleOrDefault()`.** *(Source: p. 55.)*  
-   **Answer:** `First` returns the first match or throws if none; `FirstOrDefault` returns default if none. `Single` requires exactly one match and throws for zero or multiple; `SingleOrDefault` allows zero but throws for multiple. Use `Single` only when uniqueness is an invariant.
+   **Answer:** `First` returns the first match or throws if none; `FirstOrDefault` returns default if none. `Single` requires exactly one match and throws for zero or multiple; `SingleOrDefault` allows zero but throws for multiple. Use `Single` only when uniqueness is an invariant. Example: `users.Where(u => u.Active).First()` is fine when any match will do; `users.Single(u => u.Id == 5)` documents "exactly one" and fails loudly if there are 2 (a data bug you want to know about).
 
 7. **What is middleware, and how do you write custom middleware?** *(Source: p. 55.)*  
-   **Answer:** Middleware is an ordered HTTP pipeline component. Implement `InvokeAsync(HttpContext, RequestDelegate)`, perform pre-processing, `await next(context)` to continue, and post-process if appropriate. Register via `UseMiddleware<T>()` in the correct order; inject scoped dependencies into `InvokeAsync`, not a singleton middleware constructor.
+   **Answer:** Middleware is an ordered HTTP pipeline component. Write a class that takes `RequestDelegate next` in its constructor and defines `InvokeAsync(HttpContext context)` (the `IMiddleware` interface variant instead has `InvokeAsync(HttpContext context, RequestDelegate next)`); perform pre-processing, `await next(context)` to continue, and post-process if appropriate. Register via `UseMiddleware<T>()` in the correct order; inject scoped dependencies as extra parameters of `InvokeAsync`, not into the constructor, because convention-based middleware is created once (singleton-like) and would capture a stale scoped service.
 
 8. **GET vs POST—which is better and why?** *(Source: p. 55.)*  
    **Answer:** Neither is universally better. GET is safe/idempotent and suitable for retrieval, with cacheable URL parameters; POST submits/processes data and is not inherently idempotent or cacheable. Select based on semantics, payload, privacy, and HTTP behavior, not a performance rule.
@@ -1209,7 +1219,7 @@ The two source groups below remain separate: the .NET Full Stack + AI 20+ LPA in
    **Answer:** Measure first; optimize database indexes/queries and avoid N+1; use async I/O, pagination, projection, caching where safe, compression, connection pooling, bounded concurrency, and efficient serialization. Add tracing/metrics and load tests to confirm improvement.
 
 10. **How do you implement pagination in .NET Core?** *(Source: p. 56.)*  
-    **Answer:** Validate page size and offset/cursor, apply ordering and paging in the database before materialization, return items plus paging metadata or a continuation cursor. Use keyset pagination for large/changing datasets to avoid expensive offsets and unstable pages.
+    **Answer:** Validate page size and offset/cursor, apply ordering and paging in the database before materialization, return items plus paging metadata or a continuation cursor. Use keyset pagination for large/changing datasets to avoid expensive offsets and unstable pages. Offset: `OFFSET 100000 ROWS` makes the database read and discard 100,000 rows to reach page 5,001, and if a row is inserted meanwhile, the next page repeats or skips an item. Keyset: `WHERE Id > @lastSeenId ORDER BY Id FETCH NEXT 20 ROWS ONLY` seeks directly via the index and stays stable.
 
 11. **What are MVC filters?** *(Source: p. 56.)*  
     **Answer:** Hooks around MVC resource, action, exception, and result execution, plus authorization filters. They apply MVC-specific cross-cutting behavior; middleware is preferable for concerns spanning the whole HTTP pipeline.
@@ -1325,7 +1335,7 @@ The source says the first technical round was important and began with basic but
 5. **How do you expire a JWT?**  
    **Answer:** Set a short `exp` claim and validate issuer/audience/signature/time. A JWT is normally not revocable by itself; use short lifetimes plus refresh-token rotation/revocation or a denylist/session version when immediate revocation is needed.
 6. **Custom middleware.**  
-   **Answer:** Implement `InvokeAsync(HttpContext, RequestDelegate)`, call the next delegate when appropriate, and register in the required order; keep middleware behavior focused and testable.
+   **Answer:** Take `RequestDelegate next` in the constructor, implement `InvokeAsync(HttpContext context)` (or implement `IMiddleware`, whose method also receives `next`), call the next delegate when appropriate, and register in the required order (e.g. exception handling first, then authentication, then authorization); keep middleware behavior focused and testable.
 7. **Uses of `async`/`await`.**  
    **Answer:** They compose asynchronous operations without blocking a thread during I/O; `await` propagates completion/errors. They do not make CPU-bound work automatically faster.
 8. **Database query optimization.**  
@@ -1503,7 +1513,7 @@ This file keeps the Lead Software Engineer process and the separately dated 11 J
     **Answer:** MVC action-pipeline hooks for cross-cutting behavior such as authorization, resource/action execution, exception handling, and result processing. Use middleware for application-wide HTTP concerns and filters for MVC/action-specific concerns.
 
 14. **Can you create custom middleware? How?** *(Source: p. 52.)*  
-    **Answer:** Yes. Implement `Invoke`/`InvokeAsync(HttpContext, RequestDelegate)` in a class or register an inline delegate; call `await next(context)` when continuing, and register it in the correct order with `UseMiddleware<T>()`/`Use(...)`.
+    **Answer:** Yes. Write a class with a `RequestDelegate next` constructor parameter and an `InvokeAsync(HttpContext context)` method, or register an inline delegate (`app.Use(async (context, next) => { ...; await next(context); });`); call `await next(context)` when continuing, and register it in the correct order with `UseMiddleware<T>()`/`Use(...)`.
 
 15. **What is an alternative to React `useEffect`?** *(Source: p. 52.)*  
     **Answer:** There is no universal replacement. Derive values during render or use `useMemo` for pure expensive calculations; handle user actions in event handlers; use framework/data-fetching tools or a query library for server state; use `useSyncExternalStore` for external stores. Effects remain appropriate for synchronizing with external systems.
@@ -1630,7 +1640,7 @@ The first-round group (30 April 2026, nine years' experience) and second-round g
 5. **`String` vs `StringBuilder`.** *(Source: p. 63.)*  
    **Answer:** `string` is immutable, so repeated concatenation can allocate many strings. `StringBuilder` is mutable and efficient for many appends; simple concatenation/interpolation is usually clearer for a small fixed number of parts.
 6. **What is middleware and how do you create custom middleware in .NET Core?** *(Source: p. 63.)*  
-   **Answer:** An ordered request/response pipeline component. Implement `InvokeAsync(HttpContext, RequestDelegate)`, call `next` to continue, and register with `UseMiddleware<T>()` in the correct order.
+   **Answer:** An ordered request/response pipeline component. Write a class with a `RequestDelegate next` constructor parameter and `InvokeAsync(HttpContext context)` (or implement `IMiddleware`, whose `InvokeAsync` receives `next` as a parameter), call `next` to continue, and register with `UseMiddleware<T>()` in the correct order.
 7. **What is Kestrel?** *(Source: p. 63.)*  
    **Answer:** ASP.NET Core's cross-platform web server. It can be internet-facing or run behind a reverse proxy/load balancer such as IIS, Nginx, or a cloud ingress.
 8. **How do you handle sessions in .NET Core?** *(Source: p. 63.)*  
@@ -1651,7 +1661,7 @@ The first-round group (30 April 2026, nine years' experience) and second-round g
 4. **Transient vs scoped vs singleton; where and why have you used each?** *(Source: p. 63.)*  
    **Answer:** Transient creates a new instance per resolution; scoped is one per request/scope; singleton is one per provider lifetime. Typical choices: stateless lightweight helper, request/EF `DbContext`, and thread-safe immutable shared service, respectively. Avoid capturing scoped services in singletons.
 5. **Can a scoped service be injected into a singleton?** *(Source: p. 63.)*  
-   **Answer:** Not directly as a constructor dependency: that promotes scoped state and causes a captive dependency. Create an explicit scope with `IServiceScopeFactory` for bounded work, or redesign lifetime boundaries.
+   **Answer:** Not directly as a constructor dependency: that promotes scoped state and causes a captive dependency (the singleton is built once, so it holds the first request's `DbContext` forever, shared by all later requests and threads; `DbContext` is not thread-safe, so this gives stale data and random exceptions; ASP.NET Core's scope validation throws at startup in Development to catch it). Create an explicit scope with `IServiceScopeFactory` for bounded work, or redesign lifetime boundaries.
 6. **Design a loosely coupled mall billing system for Credit Card, Debit Card, Voucher, with future Cash/Coupons. How many classes/interfaces so adding a method requires minimal changes?** *(Source: pp. 63–64.)*  
    **Answer:** Define a `IPaymentMethod` contract (`Pay(amount, context)`), implementations such as `CreditCardPayment`, `DebitCardPayment`, and `VoucherPayment`, and a `CheckoutService` that uses the selected abstraction. Resolve the strategy by an injected registry/factory keyed by a validated payment type; add a new implementation/registration without changing checkout logic. Add validation/refund contracts only if all methods genuinely support them. Avoid a growing `if/else` or switch inside checkout.
 
@@ -1669,7 +1679,7 @@ The first-round group (30 April 2026, nine years' experience) and second-round g
 2. **Clustered vs non-clustered index.** *(Source: p. 64.)*  
    **Answer:** A clustered index defines the table's row storage order/organization (one per table); a nonclustered index is a separate structure with keys and row locators (many possible). Both affect reads and write/storage cost.
 3. **What is a covering index?** *(Source: p. 64.)*  
-   **Answer:** An index containing all columns a query needs for its predicates, joins, and output, allowing it to be satisfied without a base-table lookup. Use included columns carefully to avoid oversized indexes.
+   **Answer:** An index containing all columns a query needs for its predicates, joins, and output, allowing it to be satisfied without a base-table lookup. Example: for `SELECT Name, Email FROM Users WHERE Country = 'IN'`, `CREATE INDEX IX_Users_Country ON Users(Country) INCLUDE (Name, Email)` answers the query from the index alone; without `INCLUDE`, SQL Server finds matching rows in the index and then does a key lookup into the table for each one. Use included columns carefully to avoid oversized indexes.
 4. **What is a CTE? Have you used one inside a stored procedure and why?** *(Source: p. 64.)*  
    **Answer:** A named expression scoped to one following statement, useful for readability, reuse within that statement, and recursion. It can be used in a stored procedure, but is not automatically materialized; use a temp table when intermediate materialization/indexing/statistics or reuse across statements is needed.
 5. **Temporary table `#temp` vs table variable `@table`.** *(Source: p. 64.)*  
@@ -1705,7 +1715,7 @@ The first-round group (30 April 2026, nine years' experience) and second-round g
 1. **How can unrelated components transfer data without a direct parent-child relationship?** *(Source: p. 65.)*  
    **Answer:** Use a shared injectable service/store with observable state (or a state-management library); route/query state or a backend may be more appropriate for durable/shareable data. Keep ownership and subscription lifecycles clear.
 2. **`Subject` vs `BehaviorSubject` vs `ReplaySubject`.** *(Source: p. 65.)*  
-   **Answer:** `Subject` broadcasts only future emissions; `BehaviorSubject` requires and retains a current value for new subscribers; `ReplaySubject` replays a configurable buffer/window of past emissions.
+   **Answer:** `Subject` broadcasts only future emissions; `BehaviorSubject` requires and retains a current value for new subscribers; `ReplaySubject` replays a configurable buffer/window of past emissions. Example: emissions 1, 2, 3 happen, then a new subscriber arrives. `Subject` gives it nothing until 4; `BehaviorSubject` gives it 3 immediately (good for "current user" state, which must have an initial value such as `null`); `ReplaySubject(2)` gives it 2 and 3.
 3. **What is an Angular interceptor and why use it?** *(Source: p. 65.)*  
    **Answer:** An HTTP pipeline handler for cross-cutting request/response behavior such as adding auth headers, correlation IDs, or centralized error handling. Keep retries/auth refresh bounded and avoid intercepting the refresh request recursively.
 4. **How do you keep tokens such as JWT in Angular?** *(Source: p. 65.)*  
@@ -1740,7 +1750,7 @@ The first-round group (30 April 2026, nine years' experience) and second-round g
 1. **How do you refresh an expired token using an HTTP interceptor?** *(Source: p. 66.)*  
    **Answer:** On an eligible 401, call a refresh endpoint once, update credentials, and retry the original request once; if refresh fails, clear auth state and reauthenticate. Use secure token storage/refresh rotation, avoid retry loops, and exclude the refresh endpoint itself.
 2. **When a 401 occurs while the user is active, how do `switchMap`, `catchError`, and other RxJS logic enable seamless refresh?** *(Source: p. 66.)*  
-   **Answer:** Centralize refresh with a shared in-flight observable/queue so parallel 401s do not race. `catchError` detects 401; `exhaustMap` or a shared refresh subject can ensure one refresh, then `switchMap` attaches the new token and retries the original request once. Clear the in-flight state and propagate errors; guard against refresh recursion and replay only safe requests or requests with idempotency protection.
+   **Answer:** Centralize refresh with a shared in-flight observable/queue so parallel 401s do not race. Problem: the page fires 5 API calls at once with an expired token; all 5 get 401 and each starts its own refresh. With refresh-token rotation, the first refresh invalidates the old refresh token, so the other 4 fail and the user is logged out. Fix: the first 401 starts one refresh; the other 4 wait for that same result, then all 5 retry with the new token. `catchError` detects 401; `exhaustMap` or a shared refresh subject can ensure one refresh, then `switchMap` attaches the new token and retries the original request once. Clear the in-flight state and propagate errors; guard against refresh recursion and replay only safe requests or requests with idempotency protection.
 3. **How do you make a `UserService` global singleton so it maintains state across screens during CRUD?** *(Source: p. 66.)*  
    **Answer:** Provide it at root with `@Injectable({ providedIn: 'root' })`, hold shared state in a well-defined observable/signal/store, and update it consistently after CRUD responses. Do not assume singleton memory survives page reloads or multiple browser tabs.
 4. **What does `@Injectable()` do, and what does `providedIn: 'root'` mean?** *(Source: p. 66.)*  
@@ -1820,7 +1830,7 @@ The first-round group (30 April 2026, nine years' experience) and second-round g
                string.IsNullOrWhiteSpace(input.Email))
            {
                var bad = request.CreateResponse(HttpStatusCode.BadRequest);
-               await bad.WriteStringAsync("Name and email are required.", cancellationToken);
+               await bad.WriteStringAsync("Name and email are required.");
                return bad;
            }
 
@@ -1831,7 +1841,7 @@ The first-round group (30 April 2026, nine years' experience) and second-round g
        }
    }
    ```
-   `ICustomerService` is an application dependency registered in the Functions host; validate input and enforce authorization/uniqueness in production.
+   Assumes `using System.Net; using Microsoft.Azure.Functions.Worker; using Microsoft.Azure.Functions.Worker.Http;`. `ICustomerService` is an application dependency registered in the Functions host; the primary-constructor parameter `customers` is available in the method; `AuthorizationLevel.Function` means callers must send a function key. Validate input and enforce authorization/uniqueness in production.
 ---
 
 ## Wolters

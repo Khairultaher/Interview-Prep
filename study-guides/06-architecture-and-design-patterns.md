@@ -84,7 +84,18 @@ In ASP.NET Core, dependency injection is usually preferable to a hand-written gl
 builder.Services.AddSingleton<IApplicationMetadata, ApplicationMetadata>();
 ```
 
-**Senior-level consideration:** `AddSingleton` means one instance per DI container, not one instance across every process, server, or container replica. Singleton services must be thread-safe and should not directly depend on scoped services such as `DbContext`. Avoid putting mutable request- or tenant-specific state in a singleton.
+**Senior-level consideration:** (DI = dependency injection, the built-in container that creates and supplies objects.)
+
+1. **`AddSingleton` is "one per container", not "one per system".** If you run 3 server replicas, you have 3 instances. Do not use it to enforce a global rule such as "only one job runs at a time"; that needs a distributed lock or database constraint.
+2. **Singletons must be thread-safe.** Every request thread shares the same object, so unsynchronized mutable fields cause races:
+   ```csharp
+   // Bad: two requests increment at once and lose updates
+   public sealed class Counter { public int Total; public void Add() => Total++; }
+   // Good: use Interlocked (or lock / immutable state)
+   public sealed class Counter { private int _total; public void Add() => Interlocked.Increment(ref _total); }
+   ```
+3. **A singleton must not capture a scoped service** (a "captive dependency"). A singleton lives for the whole app, so a `DbContext` injected into it is kept alive far past its request and then shared across threads, which it does not support. Fix: inject `IServiceScopeFactory` and create a short scope per operation, or make the consumer scoped.
+4. **No request- or tenant-specific state.** A singleton holding "current user" would leak one user's data into another user's request.
 
 #### 2. Factory Method
 
@@ -255,7 +266,18 @@ public sealed class ReportDefinition
 }
 ```
 
-**Senior-level consideration:** The example performs a copy of the collections but not of objects nested inside them. `MemberwiseClone()` is shallow: reference-type members remain shared. Decide explicitly whether the required semantics are shallow copy, deep copy, or immutable sharing. C# records and `with` expressions can be useful, but they also do not automatically deep-copy referenced objects.
+**Senior-level consideration:** A **shallow copy** duplicates the object but reuses the objects it points to; a **deep copy** duplicates those too. The example copies the `List` and `Dictionary` containers, but if the list held mutable objects, original and clone would still share them. `MemberwiseClone()` is shallow, and C# records' `with` expressions are shallow as well.
+
+```csharp
+// Bad: both definitions point at the SAME list, so editing the clone also edits the original
+var copy = new ReportDefinition { Name = "B", Columns = original.Columns };
+copy.Columns.Add("Total");   // original.Columns now contains "Total" too
+
+// Good: Clone() above makes a new list, so the two evolve independently
+var copy2 = original.Clone("B");
+```
+
+Decide explicitly whether you need shallow copy, deep copy, or immutable sharing (immutable data can be shared safely, so no copy is needed).
 
 ---
 
@@ -396,7 +418,11 @@ public sealed class LoggingCustomerQuery(
 
 `Customer` is the application's customer model. The inner `ICustomerQuery` can be the real database-backed implementation or another decorator.
 
-**Senior-level consideration:** Decorators compose behaviors around a stable contract and are commonly used with DI. Be explicit about decorator ordering—for example, whether caching sits inside or outside logging. In .NET, libraries such as Scrutor can help register decorators, but the pattern itself does not require a library. Avoid duplicating framework features without a clear reason.
+**Senior-level consideration:** Decorators compose behaviors around a stable contract and are commonly used with DI. Calls flow from the outermost wrapper inward: `caller -> Logging -> Caching -> real query`.
+
+- **Ordering changes behavior.** With `Logging(Caching(real))` every call is logged, including cache hits. With `Caching(Logging(real))` only cache misses reach the logger, so your logs under-report traffic. Pick the order deliberately.
+- Libraries such as Scrutor can register decorators in DI (`services.Decorate<ICustomerQuery, LoggingCustomerQuery>()`), but the pattern itself does not require a library.
+- Avoid re-implementing something the framework already provides (for example, `HttpClient` handlers or ASP.NET Core middleware) without a clear reason.
 
 #### 10. Facade
 
@@ -413,15 +439,31 @@ public sealed class CheckoutFacade(
     public async Task<Guid> CheckoutAsync(
         CheckoutRequest request, CancellationToken cancellationToken)
     {
-        await inventory.ReserveAsync(request.Items, cancellationToken);
-        var paymentId = await payments.ChargeAsync(
+        // Caller -> CheckoutFacade -> three subsystems, in order. The caller sees one method.
+        await inventory.ReserveAsync(request.Items, cancellationToken);   // step 1: stock is now held
+        var paymentId = await payments.ChargeAsync(                       // step 2: may throw
             request.CustomerId, request.Total, cancellationToken);
-        return await orders.CreateAsync(request, paymentId, cancellationToken);
+        return await orders.CreateAsync(request, paymentId, cancellationToken); // step 3
     }
 }
 ```
 
-**Senior-level consideration:** A facade simplifies access to a subsystem; it does not automatically provide transactionality or distributed consistency. If reservation succeeds but payment fails, the application needs compensation, a transaction where applicable, or a workflow such as a saga. Keep the facade focused rather than allowing it to become a god object.
+Assumes `IInventoryService`, `IPaymentService`, `IOrderRepository`, and `CheckoutRequest` exist in the application.
+
+**Senior-level consideration:**
+
+- **A facade is not a transaction.** If step 1 succeeds and step 2 throws (card declined), the stock stays reserved and nobody releases it:
+  ```csharp
+  // Bad: failure after ReserveAsync leaves stock locked forever
+  await inventory.ReserveAsync(items, ct);
+  await payments.ChargeAsync(customerId, total, ct);   // throws
+
+  // Good: compensate (undo) the earlier step, or use a saga / transaction
+  await inventory.ReserveAsync(items, ct);
+  try { await payments.ChargeAsync(customerId, total, ct); }
+  catch { await inventory.ReleaseAsync(items, ct); throw; }
+  ```
+- Keep the facade focused; if it keeps absorbing unrelated steps it becomes a "god object" (one class that knows and does everything).
 
 #### 11. Flyweight
 
@@ -476,7 +518,11 @@ public sealed class AuthorizedDocumentProxy(
 }
 ```
 
-**Senior-level consideration:** A proxy controls access to the real subject; a decorator primarily adds responsibilities, although both use wrapping and can look structurally similar. Do not rely on a proxy alone for security if the underlying service can be accessed through another path. EF Core lazy-loading proxies are a framework feature related to proxying, but they are not a reason to enable lazy loading indiscriminately.
+**Senior-level consideration:** A proxy controls access to the real subject; a decorator primarily adds responsibilities, although both use wrapping and can look structurally similar.
+
+- **A proxy is not a security boundary by itself.** If another class gets the real `IDocumentContent` injected directly, it bypasses the access check. Enforce authorization at the real service or endpoint as well, and register only the proxy in DI for the interface.
+- EF Core lazy-loading proxies (generated subclasses that load related data on first property access) are a framework use of the idea. Enabling them everywhere hides one database query per property access inside loops (the N+1 problem: 1 query for the list plus N more, one per item), so prefer explicit `Include` or projections.
+- Assumes `IDocumentAccessPolicy` and `ICurrentUser` are application services; `EnsureCanRead` throws when access is denied.
 
 ---
 
@@ -525,7 +571,7 @@ public sealed class OrderValidationPipeline(IEnumerable<IOrderCheck> checks)
 }
 ```
 
-**Senior-level consideration:** ASP.NET Core middleware is a familiar chain-like pipeline: each middleware can act before and after calling the next delegate, or short-circuit the pipeline. This sample uses a sequence of validators rather than linked `SetNext` objects. Define handler ordering clearly and distinguish a validation pipeline from a chain where each handler decides whether to pass the request onward.
+**Senior-level consideration:** ASP.NET Core middleware is a familiar chain-like pipeline: each middleware can act before and after calling the next delegate, or short-circuit the pipeline. This sample uses a sequence of validators rather than linked `SetNext` objects. Define handler ordering clearly: here the `foreach` runs every check in registration order and the first exception stops the rest, so cheap checks should come first. In the classic chain, each handler itself decides whether to pass the request to the next one (and may handle it and stop); the loop above is a simplified form of that. Assumes `ICustomerEligibility` is an application service.
 
 #### 14. Command
 
@@ -547,6 +593,8 @@ public sealed class GenerateInvoiceCommand(
         generator.GenerateAsync(orderId, cancellationToken);
 }
 
+// The invoker: it runs commands without knowing what they do. A real worker would
+// read commands from a queue; the API creates a GenerateInvoiceCommand and enqueues it.
 public sealed class CommandWorker
 {
     public Task ExecuteAsync(IApplicationCommand command, CancellationToken cancellationToken) =>
@@ -554,7 +602,9 @@ public sealed class CommandWorker
 }
 ```
 
-**Senior-level consideration:** The Command pattern turns an action into an object, which can make queuing, auditing, retries, and undo possible. A **CQRS command** is often just a message expressing an intention (for example, `CreateOrderCommand`); a separate handler performs it. Libraries such as MediatR may dispatch such messages, but the message/handler setup and the GoF Command pattern are related ideas rather than exact synonyms. Retries require idempotency and clear failure handling.
+Flow: API creates `GenerateInvoiceCommand` -> queue -> `CommandWorker` (invoker) -> `command.ExecuteAsync` -> `IInvoiceGenerator` (receiver, which does the real work).
+
+**Senior-level consideration:** The Command pattern turns an action into an object, which can make queuing, auditing, retries, and undo possible. A **CQRS command** is often just a message expressing an intention (for example, `CreateOrderCommand`); a separate handler performs it. Libraries such as MediatR may dispatch such messages, but the message/handler setup and the GoF Command pattern are related ideas rather than exact synonyms. Retries require **idempotency** (running the same command twice has the same effect as once): a retried `GenerateInvoiceCommand` that is not idempotent would produce two invoices for one order. Fix: check whether an invoice for `orderId` already exists before creating one.
 
 #### 15. Interpreter
 
@@ -583,7 +633,7 @@ public sealed class AndExpression(IRuleExpression left, IRuleExpression right) :
 
 Example: `new AndExpression(new GreaterThanExpression("Age", 18), new GreaterThanExpression("Score", 70))` expresses a small rule without compiling arbitrary source code.
 
-**Senior-level consideration:** Interpreter is suitable for a small, stable language. For complex expressions, consider a parser, a carefully constrained expression tree, or a dedicated rules engine. Never use unrestricted `eval`-style execution for user-provided rules; validate allowed operators and inputs.
+**Senior-level consideration:** Calling `Evaluate` on the `AndExpression` evaluates its two child expressions, so the object tree mirrors the rule's structure. Interpreter is suitable for a small, stable language. For complex expressions, consider a parser, a carefully constrained expression tree, or a dedicated rules engine. Never use unrestricted `eval`-style execution for user-provided rules; validate allowed operators and inputs.
 
 #### 16. Iterator
 
@@ -614,7 +664,7 @@ public sealed class OrderStream(IOrderRepository repository)
 }
 ```
 
-**Senior-level consideration:** `IEnumerable<T>`, `IEnumerator<T>`, iterator blocks using `yield return`, and `IAsyncEnumerable<T>` are built-in .NET forms of the Iterator idea. Async iteration can reduce memory pressure, but consumers must enumerate correctly and cancellation should propagate. Offset paging can become inefficient or inconsistent on changing datasets; keyset paging may be better for large production queries.
+**Senior-level consideration:** `IEnumerable<T>`, `IEnumerator<T>`, iterator blocks using `yield return`, and `IAsyncEnumerable<T>` are built-in .NET forms of the Iterator idea. Async iteration can reduce memory pressure, but consumers must enumerate correctly and cancellation should propagate. Assumes `IOrderRepository.GetPageAsync` returns an empty list when pages run out. Offset paging (`Skip(n)`) has two problems: the database must still walk past all skipped rows, so deep pages get slow; and if rows are inserted or deleted mid-export, rows are skipped or repeated. Keyset paging (`WHERE Id > @lastId ORDER BY Id LIMIT 100`) avoids both.
 
 #### 17. Mediator
 
@@ -639,7 +689,7 @@ public sealed class OrdersController(ISender sender) : ControllerBase
 
 `GetOrderByIdQueryHandler` implements the library's corresponding request-handler interface and performs the retrieval.
 
-**Senior-level consideration:** The mediator reduces direct coupling between senders and handlers, and pipeline behaviors can centralize validation, logging, or transaction boundaries. It can also hide the call graph and encourage excessive small messages or handlers. Use it where indirect dispatch improves the architecture, not automatically for every method call. A mediator coordinates peers; a facade gives a simpler entry point to a subsystem.
+**Senior-level consideration:** The mediator reduces direct coupling between senders and handlers, and pipeline behaviors can centralize validation, logging, or transaction boundaries. It can also hide the call graph: "Find usages" on `GetOrderByIdQuery` no longer leads straight to the code that runs, and a simple lookup becomes a request class plus a handler class plus registration. Use it where indirect dispatch improves the architecture, not automatically for every method call. A mediator coordinates peers; a facade gives a simpler entry point to a subsystem.
 
 #### 18. Memento
 
@@ -662,7 +712,7 @@ public sealed class ReportEditor
 }
 ```
 
-**Senior-level consideration:** This example snapshots a string, so the state is immutable and copying is straightforward. For a large object graph, snapshots can consume significant memory; consider immutable models, diffs, checkpoints, or a command-based undo history. A UI undo snapshot is not the same as a database transaction or a durable audit trail.
+**Senior-level consideration:** Usage: `var s = editor.Save(); editor.ReplaceContent("new"); editor.Restore(s);` brings back the old text. The `Snapshot` record is nested inside `ReportEditor`, which keeps the saved state opaque to outside code. This example snapshots a string, which is immutable, so keeping a copy is free. For a large mutable object graph, each snapshot is a full copy, so 1,000 edits can mean 1,000 copies in memory; consider immutable models, diffs, checkpoints, or a command-based undo history. A UI undo snapshot is not the same as a database transaction or a durable audit trail.
 
 #### 19. Observer
 
@@ -673,17 +723,19 @@ public sealed class ReportEditor
 ```csharp
 public sealed record OrderPlaced(Guid OrderId, Guid CustomerId);
 
+// Publisher (subject): raises the event; it does not know who is listening.
 public sealed class OrderService
 {
-    public event EventHandler<OrderPlaced>? OrderPlaced;
+    public event EventHandler<OrderPlaced>? Placed;
 
     public void PublishOrderPlaced(OrderPlaced order) =>
-        OrderPlaced?.Invoke(this, order);
+        Placed?.Invoke(this, order);   // calls every subscribed handler, in order
 }
 
+// Subscriber (observer): registers a handler; the publisher calls it back.
 public sealed class OrderEmailSubscriber(IEmailSender emailSender)
 {
-    public void Subscribe(OrderService service) => service.OrderPlaced += OnOrderPlaced;
+    public void Subscribe(OrderService service) => service.Placed += OnOrderPlaced;
 
     private async void OnOrderPlaced(object? sender, OrderPlaced order)
     {
@@ -692,13 +744,19 @@ public sealed class OrderEmailSubscriber(IEmailSender emailSender)
 }
 ```
 
-**Senior-level consideration:** C# events are a direct Observer-style mechanism for in-process notification. The `async void` event handler is shown only to illustrate the event shape; in production, prefer an explicit asynchronous event-dispatch abstraction when the publisher must await subscribers or observe failures. Unsubscribe long-lived subscribers when appropriate. In distributed systems, use durable messaging or an outbox when notification delivery must survive process failure. The awaitable-handler alternative is explained in [Delegates, Events, Domain Events and Integration Events](01.1-csharp-delegates-events-domain-and-integration-events.md), including the DDD version (domain events, dispatching, Outbox).
+**Senior-level consideration:** C# events are a direct Observer-style mechanism for in-process notification. Assumes `IEmailSender` is an application service.
+
+1. **`async void` hides failures.** The publisher cannot await it, so it returns before the email is sent, and an exception thrown inside crashes the process (it cannot be caught by the publisher's `try/catch`). It is shown only to illustrate the event shape. Fix: use an awaitable dispatcher (`await dispatcher.PublishAsync(event)`) when the publisher must wait for or observe failures.
+2. **Forgotten subscriptions leak memory.** The publisher holds a reference to every subscriber, so a short-lived subscriber attached to a long-lived publisher is never garbage-collected. Fix: `service.Placed -= handler` when done.
+3. **In-process only.** If the process crashes after the order is saved but before handlers run, the notification is lost. For distributed or must-not-lose notifications, use durable messaging or an outbox (see [Outbox and saga](#55-outbox-and-saga)).
+
+The awaitable-handler alternative is explained in The awaitable-handler alternative is explained in [Delegates, Events, Domain Events and Integration Events](01.1-csharp-delegates-events-domain-and-integration-events.md), including the DDD version (domain events, dispatching, Outbox).
 
 #### 20. State
 
 **Intent:** Let an object change its behavior according to its current state by delegating behavior to state-specific objects.
 
-**.NET application scenario:** An order can be submitted, shipped, or cancelled, with different valid operations in each state.
+**.NET application scenario:** An order can be pending, shipped, or cancelled, with different valid operations in each state. `Order` (the context) forwards `Ship()`/`Cancel()` to its current state object, and that state object decides what happens and which state comes next.
 
 ```csharp
 public interface IOrderState
@@ -735,7 +793,11 @@ public sealed class Order
 }
 ```
 
-**Senior-level consideration:** State models state-dependent behavior; Strategy makes an algorithm interchangeable by choice. For a persisted business workflow, the state transition should also be represented and validated in durable domain data, with concurrency rules where multiple requests may update the same order. A full state-machine library may be clearer for many states and transitions.
+**Senior-level consideration:** State models behavior that changes *automatically* as the object moves through its lifecycle; Strategy swaps an algorithm *by the caller's choice*.
+
+- **In-memory state objects are lost on restart.** The `_state` field above disappears when the process stops. Persist the status (for example a `Status` column) and rebuild the state object from it on load.
+- **Concurrent updates can double-apply transitions.** Two requests both read "Pending"; one ships, one cancels, and the last write wins. Fix: optimistic concurrency (a row-version column checked on save) so the second write fails and can be retried or rejected.
+- With many states and transitions, a state-machine library (or an explicit transition table) is often clearer than one class per state.
 
 #### 21. Strategy
 
@@ -763,9 +825,13 @@ public sealed class PaymentPricing(IFeeStrategy feeStrategy)
 {
     public decimal GetTotal(decimal amount) => amount + feeStrategy.Calculate(amount);
 }
+
+// Usage: the caller picks the algorithm; PaymentPricing never changes.
+var pricing = new PaymentPricing(new CardFeeStrategy());
+decimal total = pricing.GetTotal(100m);   // 100 + (100 * 0.025 + 0.30) = 102.80
 ```
 
-**Senior-level consideration:** Strategy favors composition over condition-heavy methods with many `if` or `switch` branches. In a real application, select the strategy through DI or a factory based on a validated key. Validate currency, rounding rules, limits, and provider-specific constraints; the pattern itself does not solve business correctness.
+**Senior-level consideration:** Strategy favors composition over a method full of `if`/`switch` branches (`if (method == "Card") ... else if (method == "Bank") ...`), where adding a payment method means editing and re-testing one big method. In a real application, select the strategy through DI or a factory based on a validated key. The pattern does not make the maths correct: you still must validate currency, rounding rules, limits, and provider constraints (for example, a flat 0.30 fee is wrong for a currency without cents).
 
 #### 22. Template Method
 
@@ -801,7 +867,7 @@ public abstract class ImportJob
 }
 ```
 
-**Senior-level consideration:** Template Method centralizes the algorithm's order and uses inheritance for variation. It works when the sequence is genuinely stable. In modern .NET applications, composition with injected steps can be easier to test and extend when the pipeline needs runtime configuration or multiple combinations. Ensure overridable steps cannot silently violate required invariants.
+**Senior-level consideration:** Template Method centralizes the algorithm's order and uses inheritance for variation. It works when the sequence is genuinely stable. In modern .NET applications, composition with injected steps can be easier to test and extend when the pipeline needs runtime configuration or multiple combinations. Ensure overridable steps cannot silently violate required invariants. Example: `Validate` is `virtual`, so a subclass can override it with an empty body and let bad data reach `PersistAsync`. Fix: make required checks non-overridable (private or `sealed`) and expose only optional extra hooks. Assumes `ImportEntity` is the application's persisted model.
 
 #### 23. Visitor
 
@@ -845,6 +911,8 @@ public sealed class ReportWordCountVisitor : IReportNodeVisitor
         WordCount += node.RowCount * node.ColumnCount; // Illustrative table counting rule.
 }
 ```
+
+**How the call flows (double dispatch):** `node.Accept(visitor)` runs the node's own `Accept`, where `this` has its exact type (`TextNode`), so `visitor.Visit(this)` picks the matching `Visit` overload. The node chooses the overload; the visitor holds the operation. Usage: `var v = new ReportWordCountVisitor(); foreach (var n in nodes) n.Accept(v); Console.WriteLine(v.WordCount);`
 
 **Senior-level consideration:** Visitor makes it easy to add new operations over a stable set of node types, but adding a new node type requires changing the visitor interface and its implementations. It suits relatively stable object structures with changing operations, such as compilers and document processing. For frequently changing element types, ordinary polymorphism or pattern matching may be simpler.
 
@@ -900,7 +968,7 @@ The goal of a senior-level answer is not just to recite each pattern's definitio
 
 #### Introduction
 
-Traditional ASP.NET Core MVC can be an excellent choice for straightforward applications. For systems with complex business rules, multiple workflows, and long-term maintenance needs, **Clean Architecture with CQRS** can provide clearer boundaries and a more organized codebase.
+Traditional ASP.NET Core MVC (Model-View-Controller) can be an excellent choice for straightforward applications. For systems with complex business rules, multiple workflows, and long-term maintenance needs, **Clean Architecture with CQRS** (Command Query Responsibility Segregation: separate models for changing data and reading data) can provide clearer boundaries and a more organized codebase.
 
 One important distinction: MVC is a presentation pattern, while Clean Architecture is an architectural approach and CQRS is a way to separate read operations from write operations. They are not direct alternatives; MVC can also be used as the presentation layer in a Clean Architecture application.
 
@@ -959,7 +1027,7 @@ public async Task<IActionResult> CreateOrder(
 }
 ```
 
-The command handler coordinates the use case, while domain/application code enforces business rules. The controller remains responsible for translating the HTTP request into an application call and mapping the outcome to an HTTP response.
+Assumes `_sender` is MediatR's `ISender`. Flow: HTTP request -> controller -> `_sender.Send(command)` -> the matching command handler (application layer) -> domain objects and repository. The command handler coordinates the use case, while domain/application code enforces business rules. The controller remains responsible for translating the HTTP request into an application call and mapping the outcome to an HTTP response.
 
 > The second example is not automatically better just because it uses a handler. The benefit comes from putting responsibilities in the right place and keeping the business rules independent of HTTP.
 
@@ -975,11 +1043,11 @@ The command handler coordinates the use case, while domain/application code enfo
 
 Clean Architecture with CQRS is not automatically faster, more scalable, or more maintainable for every project.
 
-- It introduces extra types, folders, and abstractions.
-- CQRS does **not** require separate databases or microservices.
-- Separate read/write scaling is possible, but usually requires additional infrastructure and design.
-- MVC is not inherently poorly structured. MVC with thin controllers and well-separated services can be a sound architecture.
-- MediatR is one option for dispatching requests, not a requirement. Consider its licensing and project needs before adopting it.
+- **Ceremony:** one simple feature becomes several types (command, handler, validator, DTO), so "add a field to the form" touches many files. Worth it when rules are complex; wasteful for plain CRUD.
+- **CQRS does not require separate databases or microservices.** Commands and queries can use the same database and process; splitting them is a code-organization choice.
+- **Separate read/write scaling** is possible, but needs extra infrastructure, and a separate read store means readers can briefly see stale data (eventual consistency).
+- **MVC is not inherently poorly structured.** MVC with thin controllers and well-separated services can be a sound architecture.
+- **MediatR** (a library that routes a command/query object to its handler) is one option, not a requirement. Commercial licensing applies to newer versions, so check terms before adopting it.
 
 #### A practical rule of thumb
 
@@ -1028,7 +1096,15 @@ Key practices:
 - Keep database queries selective; project only required columns.
 - Add indexes based on actual query plans.
 - Paginate large result sets, preferably with keyset pagination for deep pages.
-- Avoid N+1 database queries and unnecessary eager loading.
+- Avoid N+1 database queries (one query for a list, then one more per item) and unnecessary eager loading.
+  ```csharp
+  // Bad: 1 query for orders + N queries, one per order, for its customer
+  foreach (var o in await db.Orders.ToListAsync(ct))
+      Console.WriteLine(o.Customer.Name);   // lazy load each time
+
+  // Good: one query that joins/projects what is needed
+  var rows = await db.Orders.Select(o => new { o.Id, CustomerName = o.Customer.Name }).ToListAsync(ct);
+  ```
 - Cache stable, frequently requested data where staleness is acceptable.
 - Limit request sizes and validate input.
 - Use response compression when payload size justifies its CPU cost.
@@ -1065,14 +1141,14 @@ First, clarify what “millions” means: millions of registered users, millions
 
 A scalable design typically uses:
 
-1. A CDN/WAF or edge layer for suitable public traffic.
+1. A CDN (content delivery network: caches responses near users) / WAF (web application firewall: blocks malicious requests) or edge layer for suitable public traffic.
 2. A load balancer or gateway.
 3. Multiple stateless API instances that can scale horizontally.
 4. Asynchronous I/O for database and network calls.
 5. Database connection pooling, query optimization, and carefully designed capacity limits.
 6. Distributed caching for shared cache entries.
 7. A message broker and background workers for long-running work.
-8. Rate limiting, timeouts, backpressure, and load shedding.
+8. Rate limiting, timeouts, backpressure (slowing producers when consumers fall behind), and load shedding (deliberately rejecting some requests so the rest still succeed).
 9. Multi-region deployment only when availability or latency requirements justify it.
 10. Load tests that model realistic request mixes and dependency bottlenecks.
 
@@ -1216,7 +1292,12 @@ public sealed class ProductService(
 }
 ```
 
-For multiple API replicas, an in-memory cache is not shared. Use a distributed cache when shared state is needed. Design invalidation, expiration, stampede protection, and tenant/user isolation explicitly.
+Assumes `ProductDto` and `AppDbContext` as in 1.1. In this pattern the code checks the cache first, loads from the database on a miss, then stores the result. Known problems to design for:
+
+1. **Not shared across replicas.** `IMemoryCache` lives inside one process; with 3 API instances each has its own copy, so one instance can serve stale data after another sees an update. Fix: a distributed cache (for example Redis) when instances must agree.
+2. **Stale data.** After a product price changes, the cache keeps the old price until the 2-minute expiry. Fix: remove the key on update (`cache.Remove(key)`) and keep expiries short enough for the business.
+3. **Stampede.** When a popular key expires, 500 concurrent requests all miss and hit the database at once. Fix: let only one caller load (a per-key lock or `SemaphoreSlim`, or `GetOrCreateAsync` with a lock) and add random jitter to expiry times.
+4. **Tenant/user leaks.** A key such as `$"report:{id}"` shared by all tenants can return tenant A's data to tenant B. Fix: include the tenant (and user, if data is per-user) in the key: `$"t:{tenantId}:product:{id}"`.
 
 #### 1.7 `Span<T>` and `Memory<T>`
 
@@ -1254,7 +1335,23 @@ Persist the job before acknowledging it, or use a reliable transactional-outbox 
 - `IHostedService` defines `StartAsync` and `StopAsync`.
 - `BackgroundService` is a base class for implementing a long-running task through `ExecuteAsync`.
 
-Use `BackgroundService` for a worker loop. Use `IHostedService` directly when you need custom start/stop behavior. Hosted services are generally singletons; create a DI scope for scoped services such as EF Core `DbContext`.
+Use `BackgroundService` for a worker loop. Use `IHostedService` directly when you need custom start/stop behavior. Hosted services are generally singletons, so they cannot take a scoped service such as EF Core `DbContext` in the constructor (it would live for the whole app and be shared across iterations). Create a scope per unit of work:
+
+```csharp
+public sealed class Worker(IServiceScopeFactory scopes) : BackgroundService
+{
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            using var scope = scopes.CreateScope();   // fresh scope = fresh DbContext per iteration
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            // ... do work with db ...
+            await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
+        }
+    }
+}
+```
 
 #### 1.10 Request throttling / rate limiting
 
@@ -1341,19 +1438,40 @@ app.MapGet("/reports", () => Results.Ok())
    .RequireAuthorization("Reports.Read");
 ```
 
-Roles represent broad job functions; claims/policies can express finer permissions. For access to a particular resource, use resource-based authorization so a user cannot access another tenant's or another customer's record merely by changing an ID.
+Roles represent broad job functions; claims/policies can express finer permissions. For access to a particular resource, use resource-based authorization (check the user against the specific record, not just their role) so a user cannot access another tenant's or another customer's record merely by changing an ID:
+
+```csharp
+// Bad: any authenticated user can read /orders/42, even someone else's order (an "IDOR" flaw)
+var order = await db.Orders.FindAsync(id);
+// Good: scope the query to the caller, or call IAuthorizationService.AuthorizeAsync(user, order, policy)
+var order = await db.Orders.SingleOrDefaultAsync(o => o.Id == id && o.CustomerId == currentUserId);
+```
 
 #### 3.3 OAuth 2.0 provider / IdentityServer-style products
 
 A dedicated identity provider centralizes token issuance, client registration, scopes, consent, key rotation, and SSO/OpenID Connect integration. Choose a supported product and lifecycle; do not start a new project on an obsolete identity-server version without checking its support status.
 
-OAuth 2.0 is primarily an authorization framework; OpenID Connect adds an identity layer. Use authorization code with PKCE for interactive clients and client credentials for service-to-service clients where appropriate. Never put a confidential client secret in browser or mobile code.
+OAuth 2.0 is primarily an authorization framework; OpenID Connect adds an identity layer. Use authorization code with PKCE (Proof Key for Code Exchange: a one-time secret proving the app that started the login is the one finishing it) for interactive clients and client credentials for service-to-service clients where appropriate. Never put a confidential client secret in browser or mobile code.
 
 #### 3.4 CSRF, XSS, and SQL injection
 
-- **CSRF:** especially relevant when browsers automatically attach cookies. Use anti-forgery tokens and appropriate `SameSite`, `Secure`, and `HttpOnly` cookie settings. Bearer tokens explicitly supplied in an `Authorization` header have a different CSRF profile, but browser storage introduces other risks.
-- **XSS:** encode output, sanitize allowed rich HTML, avoid unsafe DOM insertion, and deploy a suitable Content Security Policy. Input validation alone does not prevent XSS.
-- **SQL injection:** use parameterized queries and ORM parameters. Do not concatenate untrusted values into SQL. For dynamic sort columns or identifiers, use an allowlist because SQL parameters cannot stand in for identifiers.
+- **CSRF (cross-site request forgery):** a malicious site makes the victim's browser send a request to your site, and the browser automatically attaches the victim's login cookie, so the action runs as the victim (for example a hidden form that posts "transfer money"). Fix: anti-forgery tokens plus `SameSite`, `Secure`, and `HttpOnly` cookie settings. Bearer tokens sent explicitly in an `Authorization` header are not attached automatically, so they avoid CSRF, but storing them in browser storage exposes them to XSS.
+- **XSS (cross-site scripting):** attacker-supplied text is rendered as HTML/JS in another user's browser and runs with their session.
+  ```csharp
+  // Bad: user input written straight into HTML; a comment of <script>steal()</script> executes
+  return Content($"<p>{comment}</p>", "text/html");
+  // Good: encode output (Razor does this by default) so it displays as text
+  return Content($"<p>{HtmlEncoder.Default.Encode(comment)}</p>", "text/html");
+  ```
+  Also sanitize any rich HTML you intentionally allow and deploy a Content Security Policy. Input validation alone does not prevent XSS.
+- **SQL injection:** untrusted text becomes part of the SQL command.
+  ```csharp
+  // Bad: email = "x' OR '1'='1" returns every user
+  db.Users.FromSqlRaw($"SELECT * FROM Users WHERE Email = '{email}'");
+  // Good: parameterized (FromSql with an interpolated string parameterizes automatically)
+  db.Users.FromSql($"SELECT * FROM Users WHERE Email = {email}");
+  ```
+  For dynamic sort columns or identifiers, use an allowlist because SQL parameters cannot stand in for identifiers.
 
 ```csharp
 var user = await db.Users
@@ -1398,12 +1516,14 @@ Treat API keys as secrets, not as a complete user identity system. Store them se
 
 #### 3.9 JWT best practices and pitfalls
 
-- Validate signature, issuer, audience, lifetime, and allowed algorithms.
-- Use short-lived access tokens and a secure refresh-token strategy when needed.
-- Keep sensitive information out of the payload; a signed JWT is usually readable, not encrypted.
-- Plan for key rotation and revocation.
-- Enforce authorization on the API, not only in the frontend.
-- Do not accept a token merely because it can be decoded.
+A JWT (JSON Web Token) is a signed token carrying claims such as user ID and roles.
+
+- **Validate signature, issuer (who created it), audience (who it is for), lifetime, and allowed algorithms.** Skipping audience means a token issued for a different API is accepted by yours; accepting `alg: none` means anyone can forge a token.
+- **Use short-lived access tokens plus a refresh-token strategy.** A stolen 15-minute token is far less damaging than a 30-day one, and a JWT cannot be "recalled" once issued.
+- **Keep sensitive data out of the payload.** It is only Base64-encoded, so anyone holding the token can read it (paste it into jwt.io); signing prevents tampering, not reading.
+- **Plan for key rotation and revocation** (for example a deny list or short expiry), because there is no server-side session to delete.
+- **Enforce authorization on the API, not only in the frontend.** Hiding a button does not stop someone calling the endpoint directly.
+- **Do not accept a token merely because it can be decoded.** Decoding only reads it; trust comes from verifying the signature and claims.
 
 #### 3.10 Safe error handling
 
@@ -1481,10 +1601,13 @@ Use repositories where they add a meaningful abstraction, not as a mandatory wra
 When repositories use the same scoped `DbContext`, a single `SaveChangesAsync` normally persists their tracked changes in one database transaction when the provider supports transactions.
 
 ```csharp
-await orderRepository.AddAsync(order, cancellationToken);
-await inventoryRepository.ReserveAsync(order, cancellationToken);
-await unitOfWork.SaveChangesAsync(cancellationToken);
+// Assumes both repositories share the same scoped DbContext, and IUnitOfWork.SaveChangesAsync calls it.
+await orderRepository.AddAsync(order, cancellationToken);          // only tracked in memory
+await inventoryRepository.ReserveAsync(order, cancellationToken);  // only tracked in memory
+await unitOfWork.SaveChangesAsync(cancellationToken);              // both written in ONE transaction
 ```
+
+If the repositories used different `DbContext` instances, each save would commit separately and a failure in the second would leave the first committed.
 
 For multiple databases or services, a local database transaction cannot make the whole distributed workflow atomic. Use a saga and/or transactional outbox, plus idempotency and compensating actions where appropriate.
 
@@ -1542,7 +1665,11 @@ A mediator such as MediatR or another library can route requests to handlers, bu
 
 #### 5.3 Eventual consistency
 
-If a command updates the write model and an asynchronous event updates a read model, there can be a period when reads show the old state. Make this explicit in product behavior. Use retries, idempotent consumers, monitoring, and a way to rebuild read models. For workflows requiring immediate confirmation, return the command result or read from the authoritative store where appropriate.
+If a command updates the write model and an asynchronous event updates a read model, there can be a period when reads show the old state. Example: a user places an order, is redirected to "My orders", and the new order is not listed yet because the projection has not run.
+
+- Make this explicit in product behavior (for example, show "processing" or return the new order from the command result).
+- Use retries and **idempotent consumers** (handling the same event twice leaves the same result, so redelivery is safe), plus monitoring and a way to rebuild read models.
+- For workflows requiring immediate confirmation, return the command result or read from the authoritative store.
 
 #### 5.4 Event sourcing
 
@@ -1552,7 +1679,20 @@ Event sourcing stores the sequence of domain events as the source of truth and d
 
 **Transactional outbox:** write business data and an outgoing event record in the same local database transaction. A background publisher sends the event later. Consumers must tolerate duplicates.
 
-**Saga:** coordinate a business process across multiple services through steps and compensating actions. It is not a distributed ACID transaction.
+```csharp
+// Bad: DB commit succeeds, then the process crashes before Publish -> order exists, event never sent
+await db.SaveChangesAsync(ct);
+await bus.PublishAsync(new OrderPlaced(order.Id), ct);
+
+// Good: save the event as a row in the SAME transaction; a background job publishes it later
+db.Orders.Add(order);
+db.OutboxMessages.Add(new OutboxMessage(nameof(OrderPlaced), json));
+await db.SaveChangesAsync(ct);   // both rows commit together or not at all
+```
+
+The publisher may send a message, crash before marking it sent, and send it again, hence the duplicate-tolerant consumers.
+
+**Saga:** coordinate a business process across multiple services through steps and compensating actions (for example: reserve stock, charge card; if the charge fails, release stock). It is not a distributed ACID transaction, so other services can briefly see the intermediate state.
 
 #### 5.6 Kafka vs RabbitMQ
 
@@ -1741,7 +1881,7 @@ For expiration, size limits, and cache policies, use `IMemoryCache` or a distrib
 
 #### 8.4 Fibonacci: memoization and iterative alternative
 
-Memoization avoids repeated work, but the simple dictionary example is not thread-safe and recursion can overflow the stack for large `n`. `long` also overflows beyond the representable Fibonacci range.
+Memoization (caching results of earlier calls so each value is computed once) avoids repeated work, but a simple dictionary-based version is not thread-safe, and recursion can overflow the stack for large `n`. `long` also overflows beyond Fibonacci(92). The iterative version below avoids all three problems:
 
 ```csharp
 public static long Fibonacci(int n)
@@ -1778,7 +1918,7 @@ Covered once in [EF Core, LINQ, and SQL → Performance engineering](05-efcore-l
 
 #### 8.6 Request/response body logging middleware
 
-Be cautious: body logging can expose passwords, access tokens, health data, and personal information. It can also add buffering and memory costs. Prefer structured metadata and log bodies only with explicit redaction, size limits, content-type filters, and a justified requirement.
+Be cautious: body logging can expose passwords, access tokens, health data, and personal information (a login request body contains the password, which then sits in plain text in your log store). It can also add buffering and memory costs, because the request stream must be read into memory so the endpoint can read it again. Prefer structured metadata and log bodies only with explicit redaction, size limits, content-type filters, and a justified requirement.
 
 A safer default is to log method, route, status, elapsed time, trace ID, and a request/correlation ID—not raw bodies.
 
@@ -1819,7 +1959,7 @@ static Task ProcessAsync(int item, CancellationToken cancellationToken)
 }
 ```
 
-This is an in-process queue. It does not survive process failure. Use a durable broker or persistent job store when work must not be lost.
+Here `ProduceAsync` and `ConsumeAsync` are meant to run concurrently (for example `await Task.WhenAll(ProduceAsync(ct), ConsumeAsync(ct))`); with a bounded capacity of 100, the producer waits when the queue is full (that is the backpressure). Completing the writer ends the consumer's loop. This is an in-process queue. It does not survive process failure. Use a durable broker or persistent job store when work must not be lost.
 
 #### 8.8 `Parallel.ForEach` vs `Task.WhenAll`
 
@@ -1883,7 +2023,7 @@ Avoid absolute statements such as “async always makes an API faster,” “mic
 **Answer:** Be ready to explain a few relevant patterns rather than reciting a list. Examples include Factory/Builder, Adapter/Decorator, Strategy/Observer, Repository, and CQRS; give each pattern's purpose and one suitable use case.
 
 ###### 6. What is the Singleton design pattern? Write the Singleton pattern. (PDF p. 13)
-**Answer:** Singleton controls construction so a type exposes one shared instance within a defined scope. The `Lazy<T>` implementation in answer 1 is thread-safe for initialization; in dependency injection, register with `AddSingleton<T>()` when one container-wide instance is intended. A process-wide static is not necessarily one instance across processes or load contexts.
+**Answer:** Singleton controls construction so a type exposes one shared instance within a defined scope. The `Lazy<T>` implementation in answer 1 (`Lazy<T>` runs the factory once, even when many threads ask at the same time) is thread-safe for initialization; in dependency injection, register with `AddSingleton<T>()` when one container-wide instance is intended. A process-wide static is not necessarily one instance across processes or load contexts.
 
 ###### 7. Connection pooling: many answers use Singleton, but that can be problematic, especially from the database perspective (PDF p. 13)
 **Answer:** Database connection pooling is normally provided by the database driver/provider and reuses physical connections behind short-lived logical connections. Do not keep one open `DbConnection` as a singleton; open it for an operation and dispose it promptly so the pool can manage reuse and concurrency safely.
@@ -1948,7 +2088,7 @@ Avoid absolute statements such as “async always makes an API faster,” “mic
 **Answer:** Prefer Service 1's API or published events rather than direct access to its private database; replicate a read model when latency/availability warrants it. Authenticate service-to-service with workload identity/OAuth client credentials or mutual TLS, authorize narrowly per service, and rotate credentials/tokens securely.
 
 ###### 7. Strategic DDD vs. Tactical DDD (PDF p. 13)
-**Answer:** Strategic Domain-Driven Design defines the domain, subdomains, bounded contexts, and context relationships. Tactical DDD models a bounded context with building blocks such as entities, value objects, aggregates, repositories, and domain services.
+**Answer:** DDD (Domain-Driven Design: designing software around a model of the business). Strategic DDD defines the domain, subdomains, bounded contexts, and context relationships. Tactical DDD models a bounded context with building blocks such as entities, value objects, aggregates, repositories, and domain services.
 
 ###### 8. What are a domain and subdomain? (PDF p. 13)
 **Answer:** A domain is the business problem space an organization operates in. A subdomain is a distinct area within it, such as billing within commerce, with its own concepts and rules.
@@ -1990,19 +2130,19 @@ Avoid absolute statements such as “async always makes an API faster,” “mic
 **Answer:** Attribute costs by service/environment, right-size resources, autoscale against measured demand, remove idle/nonproduction capacity, and use suitable managed/serverless or commitment options. Reduce excessive telemetry/data transfer and storage retention, and set budgets/alerts while preserving reliability and security targets.
 
 ###### 21. How do you implement the Rate Limiting pattern to isolate resource failures? (PDF p. 14)
-**Answer:** Apply limits at service boundaries (per caller/tenant/operation) and use bounded concurrency, queues, timeouts, and load shedding to prevent overload from cascading. Return `429`/`503` with retry guidance, isolate dependencies with bulkheads, and use circuit breakers for repeated dependency failures.
+**Answer:** Apply limits at service boundaries (per caller/tenant/operation) and use bounded concurrency, queues, timeouts, and load shedding to prevent overload from cascading. Return `429`/`503` with retry guidance, isolate dependencies with bulkheads (separate resource pools, so a slow payment API cannot use up all threads that the catalog needs), and use circuit breakers (stop calling a dependency for a while after repeated failures, so it can recover) for repeated dependency failures.
 
 ###### 22. What is the role of Consumer-Driven Contracts (CDC) in preventing breaking changes? (PDF p. 14)
-**Answer:** Consumers publish expectations for the provider's API/event contract; providers verify those contracts in CI before release. CDC catches compatibility regressions early, but should complement backward-compatible evolution, schema validation, and integration testing.
+**Answer:** Consumers publish expectations for the provider's API/event contract (for example "`GET /orders/1` returns `id` and `status`"); providers verify those contracts in CI (continuous integration builds) before release, so removing `status` fails the provider's build instead of breaking the consumer in production. CDC catches compatibility regressions early, but should complement backward-compatible evolution, schema validation, and integration testing.
 
 ###### 23. How do you handle reference data (e.g., countries, currencies): replicate or query? (PDF p. 14)
 **Answer:** Query a source of truth when freshness and centralized governance are critical and latency/dependency risk is acceptable. Replicate or cache versioned reference data when low latency/availability matters; define ownership, refresh/invalidation, and consistency expectations.
 
 ###### 24. When is the Anti-Corruption Layer (ACL) pattern essential? (PDF p. 14)
-**Answer:** Use an ACL when integrating with a legacy or external model whose concepts should not leak into your domain. The translation boundary protects your model and contract, at the cost of mapping and maintenance work.
+**Answer:** Use an ACL when integrating with a legacy or external model whose concepts should not leak into your domain. It is a translation layer between the two models: your code only ever sees your own types, e.g. `LegacyCustomerRec { CUST_NM, STAT_CD }` is converted to `Customer { Name, Status }` at the boundary, so a legacy rename changes one mapper rather than the whole codebase. The cost is mapping and maintenance work.
 
 ###### 25. When do you need a distributed lock vs. optimistic concurrency? (PDF p. 14)
-**Answer:** Prefer optimistic concurrency (version/ETag compare-and-swap) when conflicts are relatively rare and can be detected/retried. Use a distributed lock only when work must be mutually exclusive and cannot be safely expressed optimistically; locks need leases, fencing tokens, and failure recovery to avoid stale owners.
+**Answer:** Prefer optimistic concurrency (no lock; each row carries a version/ETag, and `UPDATE ... WHERE Version = @read` fails if someone else changed it first, so you re-read and retry) when conflicts are relatively rare. Use a distributed lock only when work must be mutually exclusive and cannot be safely expressed optimistically; locks need leases, fencing tokens, and failure recovery to avoid stale owners.
 
 ###### 26. What specific challenges does Event Sourcing introduce in microservices? (PDF p. 14)
 **Answer:** It adds event schema evolution, replay/versioning, ordering, idempotency, eventual consistency, projection rebuilding, storage/retention, and privacy-erasure challenges. It also requires operational expertise and must not be chosen merely to retain an audit trail that simpler append-only auditing can provide.
@@ -2032,16 +2172,16 @@ Avoid absolute statements such as “async always makes an API faster,” “mic
 **Answer:** Accept the request, validate and enqueue a durable job, then return `202 Accepted` with a job/status resource or callback details. Process asynchronously with idempotency, retries, cancellation, progress/status reporting, and dead-letter handling.
 
 ###### 35. What is your strategy for Canary Deployments in a dependent chain of services? (PDF p. 14)
-**Answer:** Deploy backward-compatible contracts first, then canary one service/version with controlled traffic and telemetry gates. Coordinate dependent services using version-tolerant APIs/events, gradually shift traffic, halt/rollback on SLO regressions, and avoid simultaneous incompatible migrations.
+**Answer:** Deploy backward-compatible contracts first, then canary one service/version with controlled traffic and telemetry gates. Coordinate dependent services using version-tolerant APIs/events, gradually shift traffic, halt/rollback on SLO (service-level objective, e.g. 99.9% of requests succeed) regressions, and avoid simultaneous incompatible migrations.
 
 ###### 36. How do you design a robust strategy for distributed cache invalidation? (PDF p. 14)
 **Answer:** Define ownership and staleness tolerance, use TTLs as a bound, and publish invalidation/version events on writes when prompt refresh is needed. Consider cache-aside with versioned keys and idempotent consumers; design for missed events, replication delay, and cache outages.
 
 ###### 37. How do you implement Leader Election for singleton background tasks? (PDF p. 14)
-**Answer:** Use a reliable distributed coordination service or lease-based lock with expiry and fencing tokens, so only the current leader's work is accepted. Make jobs idempotent, renew leases safely, and handle process pauses/network partitions; a static singleton only works inside one process.
+**Answer:** Use a reliable distributed coordination service or lease-based lock (a lock that expires unless renewed) with expiry and fencing tokens (an increasing number attached to each lease, so a paused old leader's late writes are rejected), so only the current leader's work is accepted. Make jobs idempotent, renew leases safely, and handle process pauses/network partitions; a static singleton only works inside one process.
 
 ###### 38. How does the CAP theorem practically influence your choice of data stores per service? (PDF p. 14)
-**Answer:** During a network partition, a distributed system must trade off immediate consistency against availability; CAP does not mean choosing only two properties in every normal operating condition. Select a store and consistency model based on each service's invariants, partition tolerance, and recovery needs.
+**Answer:** CAP (Consistency, Availability, Partition tolerance): during a network partition (nodes cannot reach each other), a distributed system must choose between returning possibly stale answers (available) or refusing/erroring (consistent); CAP does not mean choosing only two properties in every normal operating condition. Select a store and consistency model based on each service's invariants, partition tolerance, and recovery needs.
 
 ###### 39. How does Conway's Law influence team structure and service boundaries? (PDF p. 14)
 **Answer:** Systems tend to reflect the communication structures of the organizations that build them. Align team ownership and communication paths with cohesive service boundaries, but validate boundaries against domain responsibilities and avoid splitting services solely to mirror an org chart.

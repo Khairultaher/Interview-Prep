@@ -53,7 +53,7 @@ Each concept is explained once. Where several notes covered the same topic, they
 | `ChangeTracker` / state manager | Maintains tracked entity entries, identity resolution, original/current values, relationship state, and entity states. |
 | `SaveChanges` pipeline | Detects changes, prepares modification commands, executes them, and accepts changes after success. |
 | Database provider | Supplies provider-specific SQL translation, parameter handling, batching, and database behavior. |
-| `DbConnection` / `DbTransaction` | Underlying ADO.NET connection and transaction abstractions. |
+| `DbConnection` / `DbTransaction` | Underlying ADO.NET (the low-level .NET database access API that EF Core is built on) connection and transaction abstractions. |
 
 `DbContext` is commonly described as implementing Unit of Work, while `DbSet` resembles a repository-like collection. These are useful mental models, not a requirement to wrap every EF operation in a generic repository.
 
@@ -144,7 +144,17 @@ var orders = await db.Orders.ToListAsync(cancellationToken);
 var filtered = orders.Where(o => o.Total > 100);
 ```
 
-`IQueryable<T>` does not guarantee server execution for every expression: translation depends on the provider and the expression. In modern EF Core, an untranslatable expression in most query locations throws rather than silently evaluating the entire filter on the client.
+`IQueryable<T>` does not guarantee server execution for every expression: translation depends on the provider and the expression. In modern EF Core, an untranslatable expression in most query locations throws rather than silently evaluating the entire filter on the client. The exception is the final `Select` projection, which EF may run in memory after the rows return:
+
+```csharp
+// Throws InvalidOperationException: EF cannot turn a custom C# method into SQL.
+var bad = await db.Orders.Where(o => IsVip(o.CustomerId)).ToListAsync();
+
+// Fine: the final Select runs in memory, after the rows come back.
+var ok = await db.Orders.Select(o => new { o.Id, Label = FormatLabel(o) }).ToListAsync();
+```
+
+Fix for the first form: express the rule with plain properties (`o.Customer.IsVip`) so it becomes SQL.
 
 ##### 2.2 Query pipeline (conceptual)
 
@@ -239,7 +249,7 @@ At a high level, EF Core:
 var affected = await db.SaveChangesAsync(cancellationToken);
 ```
 
-The returned integer is the number of state entries written by the save operation, not necessarily the number of physical SQL statements or rows in every provider-specific case.
+The returned integer is the number of state entries written by the save operation (for example, 3 if you added 1 order and modified 2 customers), not necessarily the number of physical SQL statements or rows in every provider-specific case.
 
 ##### 3.4 `AcceptAllChanges` and retry awareness
 
@@ -252,11 +262,15 @@ await db.SaveChangesAsync(
 db.ChangeTracker.AcceptAllChanges();
 ```
 
-This overload is advanced and should not be used casually. It can be useful in carefully designed workflows where accepting tracked state must be delayed. If the database committed but the client lost the response, the outcome may be ambiguous; blindly retrying inserts can duplicate data. Use idempotency keys, unique constraints, or a deliberate retry strategy.
+Normally, after a successful save EF marks every entity `Unchanged` ("accepts" the changes). With `acceptAllChangesOnSuccess: false` the SQL runs but entities keep their `Added`/`Modified` states until you call `AcceptAllChanges()`. That lets you, for example, save inside a retried or distributed transaction and only reset tracking once the whole outer operation has succeeded. If you forget to call it, the next `SaveChanges` will try to write the same changes again.
+
+This overload is advanced and should not be used casually. Retries have a related hazard: if the database committed but the client lost the response, the outcome is ambiguous, and blindly retrying an insert can duplicate data (two identical orders). Fix it with an idempotency key (a client-generated unique id per request) backed by a unique constraint, or a deliberate retry strategy.
 
 ##### 3.5 Disconnected updates and PATCH
 
-A context does not automatically know the original values of an object deserialized from an HTTP request.
+A "disconnected" entity is one that was not loaded by the current context, for example an object deserialized from an HTTP request body (PATCH is the HTTP verb for a partial update). The context does not know its original values, so it cannot tell which properties the client really changed.
+
+Assumes `request` is a DTO (data transfer object) with `Id`, `Name`, and `Phone`, and `requestEntity` is a `Customer` built from the request body.
 
 Prefer loading the existing entity and applying allowed changes:
 
@@ -279,12 +293,13 @@ Avoid blindly doing this with client-supplied graphs:
 db.Update(requestEntity);
 ```
 
-`Update` can mark an entire graph as modified and may cause unintended updates. For a deliberate partial update, attach the entity and mark only the intended property:
+`Update` marks every property of every entity in the graph as modified. If the client omitted `Phone`, it arrives as `null` and `UPDATE ... SET Phone = NULL` overwrites the real value; a forged child `Id` can also modify rows the caller does not own. For a deliberate partial update, attach a stub (an entity holding only the key) and mark only the intended property:
 
 ```csharp
-db.Attach(customer);
-db.Entry(customer).Property(c => c.Name).IsModified = true;
-await db.SaveChangesAsync(cancellationToken);
+var stub = new Customer { Id = request.Id, Name = request.Name }; // not loaded from the DB
+db.Attach(stub);                                      // state: Unchanged
+db.Entry(stub).Property(c => c.Name).IsModified = true; // only Name is written
+await db.SaveChangesAsync(cancellationToken);          // UPDATE Customers SET Name = @p WHERE Id = @id
 ```
 
 Validate authorization and allowed fields before applying updates.
@@ -299,7 +314,7 @@ A tracking context normally maintains one tracked instance per entity key. If th
 
 ##### 3.7 Shadow properties
 
-A shadow property belongs to EF Core's model but is not declared on the CLR entity class. It can represent a foreign key or metadata such as audit information.
+A shadow property belongs to EF Core's model but is not declared on the CLR (Common Language Runtime, i.e. the .NET C#) entity class. It can represent a foreign key or metadata such as audit information.
 
 ```csharp
 protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -353,9 +368,21 @@ An explicit transaction is useful when multiple saves or database operations mus
 
 ##### 4.2 Savepoints and execution strategies
 
-EF Core may create a savepoint before `SaveChanges` when it runs inside an existing transaction and the provider supports it. A failure may roll back to that savepoint. SQL Server Multiple Active Result Sets (MARS) affects savepoint behavior; check provider documentation.
+A savepoint is a named marker inside a transaction that lets the database undo only the work after the marker. EF Core may create one before `SaveChanges` when it runs inside your explicit transaction and the provider supports it, so a failed save undoes just that save while your earlier work in the transaction survives. SQL Server Multiple Active Result Sets (MARS, several open readers on one connection) affects savepoint behavior; check provider documentation.
 
-Connection resiliency execution strategies may retry transient failures. A manually controlled transaction must be coordinated with the execution strategy; do not assume a transaction block can be safely retried without wrapping the entire unit of work appropriately. Retried work must also be designed for idempotency.
+An execution strategy (connection resiliency, e.g. `EnableRetryOnFailure()`) automatically retries when a transient error occurs, such as a dropped connection. The catch: a retry re-runs only a delegate, so a manual `BeginTransaction` placed outside it is not retried as a unit and throws `InvalidOperationException`. Wrap the whole unit of work:
+
+```csharp
+var strategy = db.Database.CreateExecutionStrategy();
+await strategy.ExecuteAsync(async () =>
+{
+    await using var tx = await db.Database.BeginTransactionAsync();
+    // ... SaveChanges calls ...
+    await tx.CommitAsync();
+});
+```
+
+Retried work must also be idempotent (safe to run twice), because the first attempt may have partly succeeded.
 
 ##### 4.3 Optimistic concurrency
 
@@ -372,7 +399,7 @@ public sealed class InventoryItem
 }
 ```
 
-When updating, EF includes the original concurrency token in the update predicate. If zero rows match, EF can throw `DbUpdateConcurrencyException`.
+When updating, EF includes the original concurrency token in the update predicate (`UPDATE Items SET Quantity = @q WHERE Id = @id AND RowVersion = @originalVersion`). If someone else changed the row since you read it, the version no longer matches, zero rows are updated, and EF throws `DbUpdateConcurrencyException` instead of silently overwriting their change (a "lost update").
 
 ```csharp
 try
@@ -444,16 +471,34 @@ catch (DbUpdateConcurrencyException ex)
 
 ##### 4.4 Isolation levels and lost updates
 
-Know the practical differences among Read Committed, Repeatable Read, Snapshot, and Serializable for the target database. Stronger isolation can reduce certain anomalies but may increase blocking, deadlocks, or version-store pressure. Correctness depends on the database engine and configuration.
+Know the practical differences among Read Committed, Repeatable Read, Snapshot, and Serializable for the target database (full explanation: [Database Indexing and Transaction Isolation](#database-indexing-and-isolation)). Stronger isolation can reduce certain anomalies but may increase blocking (one transaction waits for another's locks), deadlocks (two transactions wait on each other), or version-store pressure (tempdb space used to keep old row versions for Snapshot). Correctness depends on the database engine and configuration.
 
-For inventory or financial invariants, consider a conditional database update, constraint, or stored procedure rather than relying only on a read-then-write sequence.
+A lost update is the classic read-then-write race:
+
+```text
+Stock = 5.  Request A reads 5.  Request B reads 5.
+A writes 5 - 1 = 4.   B writes 5 - 1 = 4.     -> Stock is 4, should be 3.
+```
+
+For inventory or financial invariants, do the check and change in one atomic statement rather than a read-then-write sequence:
+
+```csharp
+// Atomic: the database decrements only if enough stock remains.
+var rows = await db.Database.ExecuteSqlInterpolatedAsync(
+    $"UPDATE Inventory SET Quantity = Quantity - {qty} WHERE Id = {id} AND Quantity >= {qty}");
+if (rows == 0) { /* out of stock or lost the race: reject */ }
+```
+
+A constraint (`CHECK (Quantity >= 0)`), stored procedure, or concurrency token achieves the same goal.
 
 ##### 4.5 Cross-service consistency
 
 A database transaction cannot normally atomically commit changes across independent service databases and a message broker. Use patterns such as:
 - **Transactional outbox:** persist business changes and an outgoing event in one database transaction; publish asynchronously.
 - **Inbox/deduplication:** recognize duplicate messages.
-- **Saga/compensation:** coordinate a multi-step business process when a global ACID transaction is unavailable.
+- **Saga/compensation:** coordinate a multi-step business process when a global ACID (Atomic, Consistent, Isolated, Durable) transaction is unavailable; if step 3 fails, run "undo" steps (for example, refund the payment taken in step 2).
+
+Why it matters: if you save the order and then publish `OrderPlaced` to a broker, a crash between the two leaves an order with no event (or an event with no order). The outbox writes the event row in the same database transaction as the order; a background publisher sends it later.
 
 ---
 
@@ -492,7 +537,17 @@ modelBuilder.Entity<Order>(entity =>
 
 ##### 5.2 Cascade behavior is not the same as database cascade behavior
 
-EF may mark dependent entities for deletion when tracked relationships are severed, while the database may also enforce `ON DELETE` actions. The exact behavior depends on relationship configuration, entity state, whether dependents are loaded, and provider/schema settings. Know which layer enforces each rule.
+There are two independent layers. EF's layer acts on entities it is tracking; the database's layer is the foreign key's `ON DELETE CASCADE` rule. They can disagree:
+
+```csharp
+// Order has Lines with a required FK. Delete the order WITHOUT loading its lines:
+db.Orders.Remove(order);
+await db.SaveChangesAsync();
+// EF only knows about tracked lines. If the FK is ON DELETE CASCADE the database
+// deletes the lines; if it is NO ACTION/RESTRICT the DELETE fails with an FK violation.
+```
+
+Behavior depends on relationship configuration, entity state, whether dependents are loaded, and provider/schema settings. Know which layer enforces each rule, and set `OnDelete(DeleteBehavior...)` explicitly for important relationships.
 
 ##### 5.3 Inheritance mapping: TPH, TPT, and TPC
 
@@ -528,6 +583,15 @@ protected override void OnModelCreating(ModelBuilder modelBuilder)
 }
 ```
 
+Resulting shape (one table, `Discriminator` says which class each row is):
+
+| Id | Name | Discriminator | Grade | Subject |
+|---|---|---|---|---|
+| 1 | Ana | Student | 10 | NULL |
+| 2 | Raj | Teacher | NULL | Math |
+
+TPT would instead give `People(Id, Name)`, `Students(Id, Grade)`, `Teachers(Id, Subject)`; TPC gives `Students(Id, Name, Grade)` and `Teachers(Id, Name, Subject)` with no `People` table.
+
 - Usually efficient for polymorphic queries because one table is queried.
 - Derived-type columns may be nullable for rows of other types.
 - Constraints that depend on the discriminator may require careful database design.
@@ -558,7 +622,7 @@ modelBuilder.Entity<Teacher>().ToTable("Teachers");
 
 - Avoids joins to a base table for many derived-type queries.
 - Repeats inherited columns across concrete tables.
-- Key generation and polymorphic queries need consideration.
+- Key generation needs care: separate tables must not hand out the same `Id` to a Student and a Teacher (use a shared sequence or GUID keys). Polymorphic queries (`db.People.ToList()`) become a `UNION ALL` across the concrete tables.
 
 **Viva tip:** Choose based on query patterns, constraints, and data shape—not just normalization preference. Confirm the capabilities of your EF Core version and provider.
 
@@ -566,7 +630,15 @@ modelBuilder.Entity<Teacher>().ToTable("Teachers");
 
 Use value conversions for representation changes such as enum-to-string or a strongly typed identifier. A converter does not automatically make every complex object a queryable JSON document. JSON mapping capabilities vary by EF Core version and provider.
 
-Use a `ValueComparer` when EF needs correct equality, hashing, or snapshot behavior for mutable/custom values. Otherwise, a mutable collection stored in a converted property may not be detected as expected.
+Use a `ValueComparer` when EF needs correct equality, hashing, or snapshot behavior for mutable/custom values. Without one, EF cannot tell that the value changed:
+
+```csharp
+// Tags is List<string> stored as one comma-separated column via a converter.
+product.Tags.Add("sale");            // mutates the list in place
+await db.SaveChangesAsync();         // nothing saved: EF compared the same list reference to itself
+```
+
+Fix: register a `ValueComparer<List<string>>` that compares by content (`SequenceEqual`) and copies the list for the snapshot.
 
 ##### 5.5 Global query filters and tenant security
 
@@ -576,11 +648,13 @@ modelBuilder.Entity<Document>()
                       && !d.IsDeleted);
 ```
 
+Assumes `_tenantContext` is an injected service on the `DbContext` that exposes the current tenant's id (see the fuller example below). A global query filter appends that predicate to every query on `Document` automatically (`WHERE TenantId = @t AND IsDeleted = 0`).
+
 Filters are useful for tenant scoping and soft deletion, but they are not a complete security boundary:
-- `IgnoreQueryFilters()` can bypass them.
-- Raw SQL and other access paths require review.
-- Tenant state must be correct for each context, especially with pooling.
-- Writes must validate tenant ownership too.
+- `IgnoreQueryFilters()` can bypass them (one careless call exposes every tenant's rows).
+- Raw SQL and other access paths require review: `ExecuteSql`, Dapper queries, stored procedures, and reporting tools never apply the EF filter, and a hand-written `FromSql` query only gets it if you remember to add the tenant predicate yourself.
+- Tenant state must be correct for each context, especially with pooling (a pooled context reused with the previous request's tenant value leaks that tenant's data).
+- Writes must validate tenant ownership too: filters only affect reads, so a client could still insert or update a row with another tenant's `TenantId`.
 - Database permissions, row-level security, or database-per-tenant may be appropriate for stronger isolation.
 
 Never trust a client-supplied `TenantId` without authorization checks.
@@ -627,22 +701,24 @@ Important safeguards:
 
 ##### 6.1 Common sources of poor performance
 
-- N+1 queries from lazy loading or repeated queries in loops.
-- Loading entire entity graphs when a DTO projection is sufficient.
-- Missing or poorly ordered indexes.
-- Large `Skip`/`Take` offsets.
-- Unbounded result sets and unnecessary materialization.
-- Tracking large read-only graphs.
-- Client-side transformations after materialization.
+- N+1 queries from lazy loading or repeated queries in loops: 1 query for the list plus 1 more per row, so 1,000 orders means 1,001 round trips (example below).
+- Loading entire entity graphs when a DTO projection is sufficient (wide rows, unused columns, extra memory).
+- Missing or poorly ordered indexes: the database scans the whole table instead of seeking to matching rows.
+- Large `Skip`/`Take` offsets: `Skip(100000)` still makes the database read and discard 100,000 rows (see 6.3).
+- Unbounded result sets and unnecessary materialization: a `ToList()` with no `Take` on a growing table eventually exhausts memory.
+- Tracking large read-only graphs: change tracking keeps a snapshot of each entity; use `AsNoTracking()`.
+- Client-side transformations after materialization: filtering/sorting in C# after the rows were already fetched.
 - Too many round trips or oversized joins.
-- Poorly selective predicates and non-sargable SQL.
-- Excessive parallelism against one context or the database.
+- Poorly selective predicates (a filter that still matches most rows, e.g. `IsActive = 1`) and non-sargable SQL (a filter that wraps the column in a function so the index cannot be used; see 6.8).
+- Excessive parallelism against one context (not thread-safe) or the database (too many concurrent queries exhaust the connection pool).
 
 ##### 6.2 N+1 and loading strategies
 
 ```csharp
-// Risk: if lazy loading is enabled, accessing Lines can issue one query per order.
-var orders = await db.Orders.ToListAsync(cancellationToken);
+// Risk (N+1): if lazy loading is enabled, accessing Lines can issue one query per order.
+var orders = await db.Orders.ToListAsync(cancellationToken);   // query 1
+foreach (var o in orders)
+    Console.WriteLine(o.Lines.Count);                          // queries 2..N+1, one per order
 
 // Better when a graph is needed:
 var ordersWithLines = await db.Orders
@@ -656,7 +732,7 @@ var summaries = await db.Orders
     .ToListAsync(cancellationToken);
 ```
 
-`Include` is not always best. Multiple collection includes can multiply joined rows. Compare single-query and split-query behavior; split queries reduce join duplication but add round trips and may observe inconsistent data across commands without appropriate transaction/isolation.
+`Include` is not always best. Multiple collection includes can multiply joined rows (cartesian explosion): a blog with 100 posts and 50 contributors returns 100 x 50 = 5,000 joined rows for that single blog, with the blog's columns repeated on each. Compare single-query and split-query behavior; split queries run one SQL query per collection, which removes the multiplication but adds round trips and may observe inconsistent data across commands (a row changes between the two queries) without an appropriate transaction/isolation.
 
 ##### Eager, explicit, and lazy loading in detail
 
@@ -724,14 +800,19 @@ var course = await db.Courses.SingleAsync(c => c.Id == courseId);
 var count = course.Students.Count;
 ```
 
-**Risks:** hidden I/O, N+1 queries, serialization-triggered queries, and access after the context is disposed. Lazy loading is not automatically more efficient; use it intentionally.
+**Risks:**
+- **Hidden I/O:** `course.Students.Count` looks like a property read but is a database call, so it can sit inside a loop unnoticed (N+1, see above).
+- **Serialization-triggered queries:** returning `course` from an API makes the JSON serializer walk every navigation, firing a query for each (and possibly looping through circular references).
+- **Access after the context is disposed:** once the `DbContext` is gone the proxy cannot query, so `course.Students` throws `ObjectDisposedException`.
+
+Lazy loading is not automatically more efficient; use it intentionally.
 
 
 ##### 6.3 Offset versus keyset pagination
 
 Offset pagination (`Skip`/`Take`) is convenient for numbered pages but
-may become more expensive at large offsets. Keyset pagination uses the
-last-seen sort key and is often better for sequential browsing.
+may become more expensive at large offsets: page 5,000 of 20 rows means the database reads and throws away 100,000 rows first, and rows inserted meanwhile can shift items between pages. Keyset pagination ("seek" pagination) uses the
+last-seen sort key and is often better for sequential browsing. Assumes `offset`, `pageSize`, `lastCreatedAt`, and `lastId` are local variables and `OrderListItem` is a small DTO record.
 
 ``` csharp
 // Offset pagination
@@ -846,9 +927,13 @@ Only use both when both behaviors solve a demonstrated problem.
 
 **Keep predicates index-friendly (sargable)**
 
-Avoid wrapping indexed columns in transformations when possible. For example, use a date range rather than comparing `o.CreatedAt.Date` to a date, where that translation would apply a function to the database column.
+"Sargable" means the database can use an index seek for the predicate. Wrapping the indexed column in a function forces it to compute the function for every row (a full scan). For example, `o.CreatedAt.Date == requestedDate` translates to `WHERE CAST(CreatedAt AS date) = @d`, which defeats an index on `CreatedAt`. Use a date range instead:
 
 ```csharp
+// Bad: function applied to the column, so the index on CreatedAt cannot seek.
+var slow = db.Orders.Where(o => o.CreatedAt.Date == requestedDate);
+
+// Good: compare the bare column to a range.
 var start = requestedDate.Date;
 var end = start.AddDays(1);
 
@@ -862,10 +947,10 @@ Index selection depends on the complete workload and execution plan; LINQ syntax
 **Key lookups**
 
 A nonclustered index may find qualifying rows, then SQL Server performs
-key lookups to retrieve columns absent from that index. A high number of
-lookups can be expensive. Consider a covering index with `INCLUDE`
-columns only when the query workload justifies its storage and write
-costs.
+key lookups (one extra read in the main table per row) to retrieve columns absent from that index. A high number of
+lookups can be expensive: 10,000 matching rows means 10,000 extra reads. A covering index adds those columns via `INCLUDE`
+so the index alone answers the query. Do this only when the query workload justifies its extra storage and slower writes.
+Below, a query filtering by `CustomerId` and selecting `Status` and `CreatedAt` is fully covered:
 
 ``` csharp
 modelBuilder.Entity<Order>()
@@ -898,7 +983,7 @@ EF Core is only for writes.
 - Read-only entity query → `AsNoTracking()`; repeated references that must share instances → `AsNoTrackingWithIdentityResolution()`.
 - Multiple included collections causing huge joins → evaluate `AsSplitQuery()`.
 - API response → narrow DTO projection.
-- PLINQ is for in-memory work; it does not speed up a database query.
+- PLINQ (Parallel LINQ, `.AsParallel()`) is for in-memory work; it does not speed up a database query, and running parallel queries on one `DbContext` throws.
 - Any performance claim → verify with SQL, execution plan, and measurements.
 
 
@@ -916,7 +1001,16 @@ Expression<Func<Customer, bool>> queryPredicate =
     c => c.IsActive;
 ```
 
-A `Func` is executable .NET code. An expression tree is a structured representation that a provider can inspect and potentially translate. Passing a compiled delegate into a query can force work to occur in memory or make translation impossible, depending on how it is used.
+A `Func` is executable .NET code. An expression tree is a structured representation that a provider can inspect and potentially translate. Passing a compiled delegate into a query can force work to occur in memory or make translation impossible, depending on how it is used:
+
+```csharp
+Func<Customer, bool> pred = c => c.IsActive;
+
+var bad  = db.Customers.AsEnumerable().Where(pred).ToList(); // downloads ALL customers, filters in C#
+var good = db.Customers.Where(c => c.IsActive).ToList();     // WHERE IsActive = 1 runs in SQL
+```
+
+When a helper method takes a predicate for use in a query, declare the parameter as `Expression<Func<T, bool>>`, not `Func<T, bool>`; with `Func`, the call binds to `Enumerable.Where` and silently loads the whole table.
 
 ##### 7.2 `Any` versus `Count`
 
@@ -929,13 +1023,15 @@ bool hasOpenOrders = await db.Orders
               cancellationToken);
 ```
 
-`Count()` asks for the count and may require more work. The database optimizer can optimize both, but use the operator that matches the intent.
+`Count()` asks for the count and may require more work (scanning every matching row to total them, when you only needed to know "is there at least one?"). `Any()` translates to `WHERE EXISTS (...)`, which can stop at the first match. The database optimizer can optimize both, but use the operator that matches the intent.
 
 ##### 7.3 Left join pattern
 
-A traditional LINQ left join uses `GroupJoin`, `SelectMany`, and `DefaultIfEmpty`:
+A left join keeps every customer, even those with no orders (their order columns are null). A traditional LINQ left join uses `GroupJoin` (the `into orders` part), `SelectMany` (the second `from`), and `DefaultIfEmpty` (supplies one null row for an empty group):
 
 ```csharp
+// Customers: (1, Ana), (2, Raj).  Orders: (10, CustomerId 1).
+// Result: (1, Ana, 10) and (2, Raj, null)   <- Raj is kept despite having no orders.
 var result =
     from customer in db.Customers
     join order in db.Orders
@@ -966,7 +1062,13 @@ var totals = await db.OrderLines
     .ToListAsync(cancellationToken);
 ```
 
-Returning full `IGrouping<TKey,TElement>` objects is not equivalent to SQL `GROUP BY` and may require client-side grouping or may not translate, depending on version and query shape.
+Returning full `IGrouping<TKey,TElement>` objects (each group with all its member rows) is not equivalent to SQL `GROUP BY`, which can only return one row per group. EF may have to download all the rows and group them in memory, or throw, depending on version and query shape:
+
+```csharp
+// Risky: asks for every row of every group, which SQL GROUP BY cannot return.
+var groups = await db.OrderLines.GroupBy(l => l.ProductId).ToListAsync();
+// Safe: reduce each group to aggregates (as above), or fetch rows then group in memory deliberately.
+```
 
 For worked examples of every join type, multi-table joins, and grouping across joined tables, see [LINQ Complex Queries: Joins and Grouping](#linq-joins-and-grouping-practice).
 
@@ -984,7 +1086,17 @@ Materialize once when reuse is intended and the result size is acceptable. Do no
 
 ##### 7.6 Dynamic predicates
 
-Build expression trees or compose predicates carefully when filters are optional. Avoid string-concatenated SQL from user input. Verify that dynamic expression construction preserves parameterization and query-cache-friendly shapes.
+Build expression trees or compose predicates carefully when filters are optional. The simplest safe pattern is to chain `Where` only when the filter was supplied:
+
+```csharp
+// Assumes name (string?) and minTotal (decimal?) are optional search inputs.
+IQueryable<Order> q = db.Orders;
+if (!string.IsNullOrWhiteSpace(name)) q = q.Where(o => o.CustomerName.Contains(name));
+if (minTotal is not null)             q = q.Where(o => o.Total >= minTotal);
+var result = await q.ToListAsync();
+```
+
+Avoid string-concatenated SQL from user input (SQL injection: input like `'; DROP TABLE Orders;--` becomes part of the command). Verify that dynamic expression construction preserves parameterization and query-cache-friendly shapes (values should be parameters, not baked-in constants).
 
 ##### 7.7 `First` vs `Single` (and `OrDefault`)
 
@@ -1023,7 +1135,7 @@ Validate business rules in the application for useful errors, but enforce critic
 - Required columns and appropriate data types.
 - Concurrency tokens.
 
-Application validation alone cannot prevent races between concurrent requests.
+Application validation alone cannot prevent races between concurrent requests. Example: two requests both run `if (!db.Users.Any(u => u.Email == e))` and both see "free", then both insert, giving duplicate emails. A unique index makes the second insert fail with a `DbUpdateException` you can turn into a friendly "email already used" error.
 
 ##### 8.4 Interceptors versus logging and domain events
 
@@ -1046,7 +1158,16 @@ var customers = await db.Customers
     .ToListAsync(cancellationToken);
 ```
 
-For `FromSqlRaw`, pass parameters separately; do not concatenate untrusted values into SQL. Parameters cannot generally stand in for SQL identifiers such as table names or sort directions, so dynamic identifiers require strict allow-listing.
+`FromSqlInterpolated` looks like string interpolation but turns each `{city}` into a SQL parameter (`@p0`), so input such as `x' OR 1=1 --` is treated as plain data. For `FromSqlRaw`, pass parameters separately; do not concatenate untrusted values into SQL:
+
+```csharp
+// Bad: input becomes part of the SQL text (injection).
+db.Customers.FromSqlRaw("SELECT * FROM dbo.Customers WHERE City = '" + city + "'");
+// Good: parameter placeholder + separate argument.
+db.Customers.FromSqlRaw("SELECT * FROM dbo.Customers WHERE City = {0}", city);
+```
+
+Note: in EF Core, `FromSql` must return all columns of the entity type. Parameters cannot generally stand in for SQL identifiers such as table names or sort directions, so dynamic identifiers require strict allow-listing.
 
 ##### 8.7 Async and cancellation
 
@@ -1068,7 +1189,7 @@ Use async database APIs in request paths to avoid blocking threads while I/O is 
 Recommended discipline:
 1. Review generated migration code and SQL.
 2. Test on a production-like database and realistic data volume.
-3. Prefer backward-compatible expand/migrate/contract changes for zero-downtime deployments.
+3. Prefer backward-compatible expand/migrate/contract changes for zero-downtime deployments. Example for renaming `Name` to `FullName`: (expand) add `FullName` while old code still uses `Name`; (migrate) deploy code that writes both and backfill old rows; (contract) once no code reads `Name`, drop it. A direct rename would break the old app version still running during the rollout.
 4. Avoid blindly applying migrations at application startup in multi-instance production deployments.
 5. Plan backups, locks, long-running index operations, and rollback/forward-fix strategy.
 6. Use a controlled deployment pipeline with permissions appropriate for schema changes.
@@ -1808,7 +1929,7 @@ var q2 = db.Employees.RightJoin(
 
 #### 6. Full outer join
 
-There is no full-join operator. Combine a **left join** with the **right-only rows** (a right anti join):
+There is no full-join operator. Combine a **left join** (all employees, with their department if any) with the **right-only rows** (a right anti join: departments that no employee matches, here Finance):
 
 ```csharp
 var leftPart =
@@ -1974,7 +2095,7 @@ Why `Any()` instead of a join plus `Distinct()`: a join returns IT twice (two em
 
 #### 10. Composite-key join
 
-The anonymous types on both sides must have the **same property names and types, in the same order**:
+The anonymous types on both sides must have the **same property names and types, in the same order**; otherwise they are two different types and the compiler reports that it cannot infer the join key type. Assumes `ShipmentLines` rows record what was shipped for each (`OrderId`, `ProductId`) pair:
 
 ```csharp
 var q =
@@ -2076,11 +2197,13 @@ FROM Orders o
 LEFT JOIN Promotions p ON o.OrderDate >= p.StartDate AND o.OrderDate <= p.EndDate;
 ```
 
-Drop `.DefaultIfEmpty()` for an inner join. If promotions overlap, an order appears once per matching promotion.
+Drop `.DefaultIfEmpty()` for an inner join. If promotions overlap, an order appears once per matching promotion. Example: order 7 dated 2024-03-05 with promotions `SPRING` (Mar 1-Mar 31) and `FLASH` (Mar 5-Mar 6) returns two rows, `(7, SPRING)` and `(7, FLASH)`; an order dated in no promotion's range returns one row with `Promo = null` (left join) or none (inner join).
 
 ---
 
 #### 12. Group join: a hierarchical result (not flattened)
+
+Assumes `customers` and `orders` are in-memory `List<Customer>` / `List<Order>` (not `DbSet`s). A group join returns one result per customer with that customer's orders nested inside (customers with no orders get `OrderCount = 0` and an empty list), instead of one flat row per customer/order pair:
 
 ```csharp
 // LINQ to Objects
@@ -2190,11 +2313,13 @@ var q2 =
 ```sql
 SELECT CustomerId, COUNT(*) AS Orders
 FROM Orders
-WHERE Status <> 3
+WHERE Status <> 3          -- 3 = Cancelled; filters ROWS before grouping
 GROUP BY CustomerId
-HAVING COUNT(*) >= 5
+HAVING COUNT(*) >= 5       -- filters GROUPS after counting (aggregates are not allowed in WHERE)
 ORDER BY Orders DESC;
 ```
+
+Meaning: `WHERE` removes individual orders first (cancelled ones never get counted). `HAVING` then drops customers whose remaining count is under 5. A row-level filter belongs before `GroupBy` (cheaper: fewer rows to group); only conditions on aggregates like `Count()` go after it.
 
 ##### 13.4 Computed keys
 
@@ -2496,7 +2621,7 @@ var top3m = db.Categories.Select(c => new
 // Latest order of each customer (EF Core 6+ translates with ROW_NUMBER())
 var latest = db.Orders
     .GroupBy(o => o.CustomerId)
-    .Select(g => g.OrderByDescending(o => o.OrderDate).First());
+    .Select(g => g.OrderByDescending(o => o.OrderDate).First());   // exactly one row per customer, even on date ties
 
 var latestQ =
     from o in db.Orders
@@ -2555,7 +2680,17 @@ var q2 = db.OrderLines
     });
 ```
 
-The grand total runs as a scalar subquery. Alternatively, fetch the total in its own query first. Guard against dividing by zero when the table can be empty.
+The grand total runs as a scalar subquery (a `SELECT SUM(...)` embedded in the outer query, evaluated once). Alternatively, fetch the total in its own query first. Guard against dividing by zero when the table can be empty:
+
+```csharp
+// Bad: if OrderLines is empty the Sum is NULL/0 and the division fails or returns null
+// Good: fetch the total first and skip the division when it is 0
+var total = await db.OrderLines.SumAsync(l => (decimal?)(l.Quantity * l.UnitPrice)) ?? 0;
+var shares = total == 0 ? [] : await db.OrderLines
+    .GroupBy(l => l.Product.Category.Name)
+    .Select(g => new { Category = g.Key, SharePct = g.Sum(x => x.Quantity * x.UnitPrice) * 100 / total })
+    .ToListAsync();      // `total` is sent as a parameter, not a subquery
+```
 
 ---
 
@@ -2809,6 +2944,12 @@ Bulk deletion bypasses tracking and `SaveChanges` hooks.
 
 #### 14. Explain transaction isolation levels.
 
+Terms: a **dirty read** sees another transaction's uncommitted change
+(which may later roll back). A **non-repeatable read** reads the same row
+twice and gets different values because someone committed an update in
+between. A **phantom** is a re-run of the same `WHERE` query returning
+extra (or fewer) rows because someone inserted/deleted matching rows.
+
 -   **Read Uncommitted:** dirty reads may occur.
 -   **Read Committed:** prevents dirty reads; repeated reads may see
     changes.
@@ -3009,6 +3150,18 @@ var users = await db.Users.Where(u =>
 Collation names are database-specific. `ToLower()` on a column may hurt
 index use; `Like()` does not itself guarantee case-insensitive matching.
 
+Why `ToLower()` hurts: wrapping the column in a function means the
+database must compute `LOWER(Name)` for every row, so it cannot seek the
+index on `Name` and scans the whole table instead.
+
+``` csharp
+// Bad: LOWER(Name) = 'ali' -> index scan (every row evaluated)
+db.Users.Where(u => u.Name.ToLower() == "ali");
+// Good: on a case-insensitive column/collation (the SQL Server default),
+// plain equality is already case-insensitive and can use the index
+db.Users.Where(u => u.Name == "ali");
+```
+
 #### 31. What are JSON columns?
 
 They store structured JSON in a database column. EF Core's mapping/query
@@ -3066,6 +3219,28 @@ physical deletion, not soft deletion.
   Query filter vs authorization       Default filtering vs complete
                                       security enforcement
   -----------------------------------------------------------------------
+
+Table terms explained:
+
+- **Context pooling vs connection pooling:** `AddDbContextPool` reuses and
+  resets the C# `DbContext` objects (saves allocation, so do not keep
+  per-request state in fields of a pooled context). Connection pooling
+  (ADO.NET, on by default) reuses the underlying TCP/database connections.
+  They are independent and both can be on.
+- **`Update(entity)` vs marking properties:** `db.Update(order)` marks
+  every column of the entity (and any reachable new/untracked graph) as
+  modified, so the `UPDATE` sets all columns and can overwrite another
+  user's change. Marking one property sends only that column:
+  `db.Entry(order).Property(o => o.Status).IsModified = true;`
+- **Query filter vs authorization:** a global filter like
+  `HasQueryFilter(c => c.TenantId == tenantId)` is a convenience that
+  `IgnoreQueryFilters()`, raw SQL, or bulk operations can bypass, so it
+  is not a security boundary; still check permissions in code (or use
+  database row-level security).
+- **Concurrency token vs isolation level:** a token (`[Timestamp]`/
+  `rowversion`) detects that someone changed *this row* since you read it,
+  and `SaveChanges` throws `DbUpdateConcurrencyException`. An isolation
+  level controls what your transaction can *see* and how long locks last.
 
 #### Viva answer formula
 
@@ -3313,6 +3488,14 @@ public class EfCoreBenchmarks
 }
 ```
 
+What each pair isolates:
+
+| Pair | What it shows |
+|---|---|
+| `TrackingRead` vs `NoTrackingRead` | Tracking stores a snapshot of every returned entity for change detection; `AsNoTracking` skips that, so it uses less CPU and memory on read-only queries. |
+| `EntityGraph` vs `Projection` | The graph loads full `Order`, `OrderItem` and `Payment` rows (every column) just to count them; the projection fetches only the id and two counts. |
+| `OffsetPagination` vs `KeysetPagination` | `Skip(50_000)` makes SQL Server walk past and discard 50,000 rows before returning 20; `Id > 50000` seeks straight to the start via the key index, so cost does not grow with page depth. |
+
 **Important:** The pagination methods above are a controlled
 illustration using `Id` as the ordering key. They return equivalent
 page-shaped results only if the test data and cursor are designed
@@ -3390,11 +3573,13 @@ pagination differences observable---for example, hundreds of thousands
 of orders with realistic distributions of tenants, statuses, dates,
 items, and payments.
 
-Ensure: - Data distribution is not uniform unless production is
-uniform. - Indexes and statistics reflect the intended scenario. - The
-database is warmed up before steady-state runs. - Each compared query
-returns equivalent logical results. - Database metrics are captured
-alongside application benchmarks.
+Ensure:
+
+- Data distribution is not uniform unless production is uniform (real data is skewed: one tenant may own 80% of rows, and that changes the plan).
+- Indexes and statistics (the row-distribution summaries the optimizer uses to pick a plan) reflect the intended scenario.
+- The database is warmed up before steady-state runs (first runs include cold cache and plan compilation).
+- Each compared query returns equivalent logical results (otherwise you are comparing different work).
+- Database metrics are captured alongside application benchmarks.
 
 ##### 1.9 Capture SQL and execution plans
 
@@ -3411,9 +3596,13 @@ Console.WriteLine(query.ToQueryString());
 ```
 
 For SQL Server/Azure SQL, compare actual execution plans and Query Store
-metrics. Record: - Duration and CPU. - Logical reads and rows read. -
-Actual vs. estimated row counts. - Index seek/scan and key lookup
-behavior. - Sorts, spills, blocking, and memory grants.
+metrics. Record:
+
+- Duration and CPU.
+- Logical reads (8 KB pages read from memory/disk) and rows read.
+- Actual vs. estimated row counts (a big gap means stale statistics and often a bad plan).
+- Index seek (jump to matching rows) vs scan (read everything), and key lookups (extra trips to the clustered index for columns the index lacks).
+- Sorts, spills (sort/hash overflowing memory into tempdb), blocking, and memory grants.
 
 Do not assume an index seek is always better than a scan; a scan can be
 appropriate when a large proportion of a table is needed.
@@ -3491,6 +3680,21 @@ Record your actual results instead of copying assumed numbers:
 -   [ ] Benchmark representative workloads before and after changes.
 -   [ ] Test against the production database provider for critical query
     behavior.
+
+##### Checklist terms explained
+
+- **N+1 queries:** one query loads N parents, then lazy loading or a loop fires one more query per parent (N extra round trips).
+  ```csharp
+  // Bad: 1 query for orders + 1 per order for Items
+  foreach (var o in await db.Orders.ToListAsync()) Console.WriteLine(o.Items.Count);
+  // Good: one query
+  var counts = await db.Orders.Select(o => new { o.Id, N = o.Items.Count }).ToListAsync();
+  ```
+- **Split queries:** a single `Include` of two collections joins them and returns Items x Payments rows per order (cartesian explosion); `AsSplitQuery()` sends one query per collection instead.
+- **Deterministic pagination:** the `OrderBy` must end in a unique column (e.g. `.OrderBy(o => o.CreatedAt).ThenBy(o => o.Id)`); otherwise rows with equal dates can appear on two pages or on none.
+- **Parameter-sensitive plans (parameter sniffing):** SQL Server caches the plan built for the first parameter value; if `TenantId = 1` has 5 rows and `TenantId = 2` has 5 million, the cached plan suits one and is slow for the other.
+- **Safe retries:** `EnableRetryOnFailure` re-runs a command after a transient error; a non-idempotent operation (e.g. charging a card, then losing the connection before the reply) can be executed twice unless guarded by an idempotency key or unique constraint.
+- **Short-lived `DbContext`:** a context lives for one unit of work (one request); a long-lived one accumulates tracked entities (memory growth, stale data) and is not thread-safe.
 
 #### 3. Official Microsoft documentation
 
@@ -3726,6 +3930,21 @@ This is a conceptual template: the allowed clauses depend on the specific functi
 
 **Important:** `LAG`, `LEAD`, and ranking functions do **not** accept a `ROWS BETWEEN` frame in SQL Server. For ordered aggregate windows, explicitly specify `ROWS` when row-by-row behavior is intended; otherwise the default can be `RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW`.
 
+Why it matters: `RANGE` treats rows with equal `ORDER BY` values as peers and includes all of them, so ties change the running total (and `RANGE` is also slower, spilling to disk). Assume Alice has two rows in month 2, amounts 150 and 50:
+
+```sql
+SUM(Amount) OVER (PARTITION BY SalesPerson ORDER BY SalesMonth)                    -- default RANGE
+SUM(Amount) OVER (PARTITION BY SalesPerson ORDER BY SalesMonth ROWS UNBOUNDED PRECEDING) -- ROWS
+```
+
+| Month | Amount | Default (RANGE) | `ROWS` |
+|---:|---:|---:|---:|
+| 1 | 100 | 100 | 100 |
+| 2 | 150 | 300 | 250 |
+| 2 | 50 | 300 | 300 |
+
+With `RANGE` both month-2 rows show 300 (peers are included together); with `ROWS` you get a true row-by-row running total. Always write `ROWS` for a running total.
+
 #### 4. Window-function catalog (SQL Server)
 
 | Category | Functions | What they do |
@@ -3833,7 +4052,13 @@ SELECT SalesPerson, SalesMonth, Amount,
 FROM dbo.MonthlySales;
 ```
 
-The explicit full frame is important: without it, `LAST_VALUE` commonly returns the current row's value rather than the partition's final value.
+The explicit full frame is important. The default frame ends at the current row, so without it `LAST_VALUE` just returns the current row's own value:
+
+| SalesPerson | Month | Amount | Default frame | Full frame (above) |
+|---|---:|---:|---:|---:|
+| Alice | 1 | 100 | 100 | 200 |
+| Alice | 2 | 150 | 150 | 200 |
+| Alice | 3 | 200 | 200 | 200 |
 
 #### 6. Interview reminders
 
@@ -3902,6 +4127,17 @@ CREATE INDEX IX_Orders_Tenant_Status_Created
   INCLUDE (Total);                     -- SQL Server / PostgreSQL syntax
 ```
 
+Why order matters, using sample index entries sorted by `(TenantId, Status, CreatedAt)`:
+
+| TenantId | Status | CreatedAt |
+|---:|---:|---|
+| 1 | 0 | Jan 05 |
+| 1 | 1 | Jan 02 |
+| 1 | 1 | Jan 09 |
+| 2 | 1 | Jan 01 |
+
+`WHERE TenantId = 1 AND Status = 1 AND CreatedAt > Jan 03` seeks to the (1, 1) slice, which is already in date order, and reads from Jan 09 onward. `WHERE Status = 1` alone cannot seek: Status-1 rows are scattered between tenants.
+
 Equality columns narrow the search to a contiguous slice; the trailing column is already sorted within that slice, so the engine seeks to the start and reads forward without an in-memory sort. Only **one** range/sort predicate can be absorbed; a second range degrades to a post-filter.
 
 ### Column order is load-bearing for key columns
@@ -3961,7 +4197,7 @@ More random page writes and lock contention in B-Tree engines; more entries to f
 |---|:---:|:---:|:---:|:---:|
 | Read Uncommitted | possible | possible | possible | possible |
 | Read Committed | prevented | possible | possible | possible |
-| Repeatable Read | prevented | prevented | prevented (by the standard) | possible |
+| Repeatable Read | prevented | prevented | **possible** (the standard allows it; PostgreSQL and InnoDB prevent it in practice, SQL Server does not) | possible |
 | Serializable | prevented | prevented | prevented | prevented |
 
 That table is the **specification**; engines deliver different things under the same name:
@@ -4115,7 +4351,9 @@ Retry the whole transaction on serialization failure.
 ##### Theory questions
 
 ###### 1. What is normalization? State its forms. (PDF p. 12)
-**Answer:** Normalization organizes relational data to reduce redundancy and update anomalies. Common forms: 1NF (atomic values/no repeating groups), 2NF (1NF and no partial dependency on part of a composite key), 3NF (2NF and no inappropriate transitive dependency on a key), and BCNF (every determinant is a candidate key).
+**Answer:** Normalization organizes relational data to reduce redundancy and update anomalies (e.g. a customer's city stored on every order row, so changing it means editing many rows and risking inconsistency). Common forms: 1NF (atomic values/no repeating groups), 2NF (1NF and no partial dependency on part of a composite key), 3NF (2NF and no inappropriate transitive dependency on a key), and BCNF (every determinant is a candidate key).
+
+Quick examples: a `Phones = '111, 222'` column breaks 1NF (split into rows). In `OrderLine(OrderId, ProductId, ProductName, Qty)` with key `(OrderId, ProductId)`, `ProductName` depends only on `ProductId`, a partial dependency that breaks 2NF (move it to `Product`). In `Employee(Id, DeptId, DeptName)`, `DeptName` depends on `DeptId`, not directly on `Id`, a transitive dependency that breaks 3NF (move it to `Department`).
 
 ###### 2. What is Boyce–Codd normal form? (PDF p. 12)
 **Answer:** BCNF requires every nontrivial functional dependency `X → Y` to have `X` as a superkey. It is stricter than 3NF and can remove certain anomalies left by 3NF.
@@ -4169,7 +4407,7 @@ Retry the whole transaction on serialization failure.
 **Answer:** `ROW_NUMBER()` is a window function assigning a unique sequential number within each partition according to an `ORDER BY`. Use a deterministic tie-breaker if stable row numbering matters.
 
 ###### 19. `RANK` vs. `DENSE_RANK` (PDF p. 12)
-**Answer:** Both assign equal ranks to ties within a partition. `RANK` leaves gaps after tied positions (1, 1, 3); `DENSE_RANK` does not (1, 1, 2).
+**Answer:** Both assign equal ranks to ties within a partition. `RANK` leaves gaps after tied positions (1, 1, 3); `DENSE_RANK` does not (1, 1, 2). For salaries 90, 90, 80: `RANK` = 1, 1, 3; `DENSE_RANK` = 1, 1, 2; `ROW_NUMBER` = 1, 2, 3.
 
 ###### 20. What is a partition? (PDF p. 12)
 **Answer:** In a window function, `PARTITION BY` divides rows into independent groups over which the function is evaluated. Database table partitioning is a separate physical-storage feature; clarify which meaning is intended.
@@ -4178,13 +4416,13 @@ Retry the whole transaction on serialization failure.
 **Answer:** Ties occur when rows have equal values under the ranking/order expression. `RANK`/`DENSE_RANK` assign equal ranks; `ROW_NUMBER` still assigns distinct numbers. Add a tie-breaker only when a deterministic ordering is required.
 
 ###### 22. What are magic tables? (PDF p. 12)
-**Answer:** In SQL Server trigger terminology, `inserted` and `deleted` are logical transition tables containing affected rows—new values and old values respectively, depending on operation. Triggers must handle multiple rows rather than assuming a single row.
+**Answer:** In SQL Server trigger terminology, `inserted` and `deleted` are logical transition tables containing affected rows—new values and old values respectively, depending on operation. Triggers must handle multiple rows rather than assuming a single row. For `UPDATE`, `deleted` holds the old values and `inserted` the new; for `INSERT` only `inserted` has rows; for `DELETE` only `deleted`. Bad: `SELECT @id = Id FROM inserted` (reads one arbitrary row of a multi-row statement). Good: `INSERT INTO Audit SELECT Id, GETDATE() FROM inserted;` (handles every row).
 
 ###### 23. What is a deadlock? (PDF p. 12)
-**Answer:** A deadlock occurs when concurrent transactions wait in a cycle for resources held by each other; the engine selects a victim and rolls it back. Reduce risk with consistent access order, short transactions, suitable indexes/isolation, and retry handling for deadlock victims.
+**Answer:** A deadlock occurs when concurrent transactions wait in a cycle for resources held by each other; the engine selects a victim and rolls it back. Reduce risk with consistent access order, short transactions, suitable indexes/isolation, and retry handling for deadlock victims. Example: T1 updates row A then wants B; T2 updates row B then wants A; each waits for the other forever, so SQL Server kills one (error 1205). Fix: make both update A then B.
 
 ###### 24. What is `WITH (NOLOCK)`? (PDF p. 12)
-**Answer:** In SQL Server, `NOLOCK` is equivalent to `READ UNCOMMITTED` for a table reference. It can return dirty, missing, or duplicated rows and does not eliminate all blocking; use row-versioning isolation (such as RCSI) or a different design when appropriate rather than treating it as a harmless performance switch.
+**Answer:** In SQL Server, `NOLOCK` is equivalent to `READ UNCOMMITTED` for a table reference. It can return dirty, missing, or duplicated rows and does not eliminate all blocking; use row-versioning isolation (such as RCSI, Read Committed Snapshot Isolation, where readers see the last committed version instead of waiting) or a different design when appropriate rather than treating it as a harmless performance switch. Example: a report using `SELECT SUM(Balance) FROM Accounts WITH (NOLOCK)` while a transfer is mid-flight can count the money as debited from one account and not yet credited to the other (a dirty read), and can miss or double-count rows during page splits.
 
 ###### 25. What is an isolation level? (PDF p. 12)
 **Answer:** An isolation level controls how concurrent transactions may observe each other's changes and which anomalies are possible (see the [engine-agnostic anomaly and isolation tables](#database-indexing-and-isolation)). SQL Server options include Read Uncommitted, Read Committed, Repeatable Read, Snapshot, and Serializable; stronger isolation can reduce anomalies but increase contention or version-store use.
@@ -4207,7 +4445,9 @@ Retry the whole transaction on serialization failure.
 
 ##### Employee names with a duplicated mobile number *(PDF pp.18–19)*
 
-Given the `EmpName` and `MobileNo` rows, return names whose number occurs more than once:
+Assumes a table `Employee(EmpName, MobileNo)` (the source PDF's data is not reproduced here). Tiny illustration: rows `(A, 111)`, `(B, 111)`, `(C, 222)` return `A, B`, because the inner query finds numbers appearing more than once (`111`) and the outer query lists everyone holding them.
+
+Return names whose number occurs more than once:
 
 ```sql
 SELECT e.EmpName
@@ -4225,7 +4465,7 @@ For the supplied data this returns `A, B, D, E, F, H`. The PDF's stated output a
 
 ##### Count consumers by orders/refills between April 1 and June 30, 2023, including zero *(PDF pp.19–20)*
 
-Count orders for each consumer in the inclusive date interval, then group consumers by that count. `LEFT JOIN` keeps consumers with no matching orders. The half-open date range also works when `DeliverDate` is a timestamp.
+Count orders for each consumer in the inclusive date interval, then group consumers by that count. `LEFT JOIN` keeps consumers with no matching orders. The half-open date range (`>= Apr 1` and `< Jul 1`) also works when `DeliverDate` is a timestamp, because `<= '2023-06-30'` would drop orders made after midnight on June 30. Assumes `tblConsumer(Id)` and an orders table (confusingly named `tblCustomer` in the source) with `OrderId`, `ConsumerId`, `DeliverDate`. The date test sits in the `ON` clause, not `WHERE`: a `WHERE` on `o.DeliverDate` would discard the NULL rows of consumers with no orders and silently remove the zero-count group. `COUNT(o.OrderId)` (not `COUNT(*)`) counts 0 for those NULL rows.
 
 ```sql
 WITH PerConsumer AS
@@ -4284,3 +4524,5 @@ WHERE SalaryRank = @N;
 ```
 
 If the intended meaning is the Nth row including duplicate salaries, use `ROW_NUMBER()` with a deterministic tie-breaker instead.
+
+Example: salaries 90, 90, 80, 70. With `@N = 2`, `DENSE_RANK` returns 80 (distinct values: 90, 80, 70); `ROW_NUMBER` would return 90 (the 2nd row). The CTE is needed because a window function cannot appear directly in `WHERE`.

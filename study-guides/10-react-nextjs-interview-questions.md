@@ -6,6 +6,19 @@ The first questions below consolidate material found in the Questpond sources. T
 
 ### 1. How do you handle exceptions in React?
 **Answer:** Use error boundaries to handle errors thrown while rendering, in lifecycle methods, and by constructors of descendant components. They do not catch errors in event handlers or arbitrary asynchronous callbacks, so handle those explicitly with `try`/`catch` and report errors at an appropriate boundary.
+```jsx
+<ErrorBoundary fallback={<p>Something went wrong</p>}>
+  <Profile />   {/* a throw while Profile renders shows the fallback */}
+</ErrorBoundary>
+
+function Save() {
+  async function onClick() {
+    try { await api.save(); }          // NOT caught by the boundary, so catch it here
+    catch (e) { setError(e.message); } // assumes an error state and an api client
+  }
+  return <button onClick={onClick}>Save</button>;
+}
+```
 
 ### 2. What is an alternative to React `useEffect`?
 **Answer:** There is no universal replacement. Derive values during render, use `useMemo` for pure expensive calculations, and handle user actions in event handlers. For server state, prefer framework data-fetching features or a query library; use `useSyncExternalStore` to subscribe to external stores. Use effects when synchronizing with external systems.
@@ -23,6 +36,7 @@ console.log(1 + '2');
 console.log('2' + 1);
 ```
 **Answer:** `2`, `"12"`, and `"21"`, respectively. Boolean is converted to a number for numeric addition; when string concatenation is selected, the other operand is converted to a string.
+(`true + 1`: no string, so `true` becomes `1`. `1 + '2'` / `'2' + 1`: a string is present, so the number is converted and the two are joined.)
 
 ## Supplementary React.js questions
 
@@ -36,36 +50,83 @@ These additional questions are not attributed to Questpond.
 
 ### 3. What is the difference between props and state?
 **Answer:** Props are inputs passed to a component by its parent and should be treated as read-only. State is data managed by a component or a state owner; updating it schedules a render. Pass callbacks through props when a child needs to request a parent-owned state change.
+```jsx
+function Parent() {
+  const [count, setCount] = useState(0);                    // state: owned by Parent
+  return <Child value={count} onAdd={() => setCount(count + 1)} />; // props: read-only in Child
+}
+```
 
 ### 4. What causes a React component to render again?
 **Answer:** A component can render when its state changes, when its parent renders, or when a consumed context value changes. A render computes the next UI; React may then commit only the necessary DOM changes. Rendering should remain pure because React may call it more than once.
 
 ### 5. Why are `key` props needed when rendering a list?
 **Answer:** Keys let React match list items between renders so it can preserve the right component state and efficiently apply insertions, removals, and reordering. Use a stable, unique identifier from the data; array indexes can cause incorrect state preservation when items move or are removed.
+```jsx
+// Bad: if the first item is deleted, item 2 becomes index 0 and inherits item 1's input text/state
+{items.map((it, i) => <Row key={i} item={it} />)}
+// Good: the key follows the item, so state stays with the right row
+{items.map(it => <Row key={it.id} item={it} />)}
+```
 
 ### 6. What is the difference between controlled and uncontrolled inputs?
 **Answer:** A controlled input gets its value from React state and reports changes through an event handler. An uncontrolled input keeps its current value in the DOM and can be read through a ref or form submission. Controlled inputs are useful when the UI must respond to or validate each change; uncontrolled inputs can simplify cases where the value is only needed on submit.
 
 ### 7. What are the Rules of Hooks?
-**Answer:** Call Hooks only at the top level of a function component or custom Hook—not inside conditions, loops, or nested functions—and only from React function components or custom Hooks. This keeps Hook call order stable between renders.
+**Answer:** Call Hooks only at the top level of a function component or custom Hook—not inside conditions, loops, or nested functions—and only from React function components or custom Hooks. This keeps Hook call order stable between renders (React identifies each Hook by its position in the call order).
+```jsx
+// Bad: on renders where cond is false the call order shifts and state is mismatched
+if (cond) { const [a, setA] = useState(0); }
+// Good: always call the Hook, put the condition inside or after it
+const [a, setA] = useState(0);
+if (cond) { /* use a */ }
+```
 
 ### 8. What is a custom Hook?
 **Answer:** A custom Hook is a function whose name starts with `use` and that composes built-in or other Hooks to share stateful logic between components. It shares logic, not one shared state instance: each component calling it has its own Hook state unless the Hook connects to a shared store or context.
 
 ### 9. What does `useState` do, and why use its functional updater form?
 **Answer:** `useState` adds state to a function component and returns the current value and a setter. Use the functional form, such as `setCount(current => current + 1)`, when the next value depends on the previous value; this avoids relying on a potentially stale value captured by a render.
+```jsx
+// Bad: both calls see the same captured count (say 0), so the result is 1, not 2
+setCount(count + 1); setCount(count + 1);
+// Good: each call receives the latest pending value, so the result is 2
+setCount(c => c + 1); setCount(c => c + 1);
+```
 
 ### 10. What is `useEffect` for, and when does its cleanup run?
-**Answer:** `useEffect` synchronizes a component with an external system, such as a subscription, timer, browser API, or network connection. React runs cleanup before re-running the Effect when its dependencies change and when the component is removed. Effects are not needed for values that can be calculated during rendering or for logic that belongs directly in an event handler.
+**Answer:** `useEffect` synchronizes a component with an external system, such as a subscription, timer, browser API, or network connection. React runs cleanup before re-running the Effect when its dependencies change and when the component is removed.
+```jsx
+useEffect(() => {
+  const id = setInterval(tick, 1000);  // setup: start the external thing
+  return () => clearInterval(id);      // cleanup: runs before the next setup and on unmount
+}, []);                                // assumes tick is defined and stable
+```
+ Effects are not needed for values that can be calculated during rendering or for logic that belongs directly in an event handler.
 
 ### 11. How should Effect dependencies be selected?
 **Answer:** Include every reactive value from the component that the Effect reads. The dependency list describes the values the Effect uses; it is not a manual scheduling switch. Restructure the code or extract stable logic when dependencies cause unwanted repetition instead of suppressing dependency checks without understanding the behavior.
+```jsx
+// Bad: query is read but not listed, so the Effect keeps using a stale query
+useEffect(() => { fetchResults(query); }, []);
+// Good: re-runs whenever query changes, which is what you want
+useEffect(() => { fetchResults(query); }, [query]);
+```
 
 ### 12. What is the difference between `useMemo` and `useCallback`?
 **Answer:** `useMemo` caches the result of a calculation between renders when dependencies are unchanged. `useCallback` caches a function identity. They are performance optimizations, not correctness guarantees; first keep rendering simple, measure, and use memoization when it meaningfully avoids work or stabilizes a dependency.
+```jsx
+const sorted = useMemo(() => sortBig(list), [list]);        // reuse result while list is unchanged
+const onPick = useCallback(id => select(id), [select]);     // same function identity across renders
+```
 
 ### 13. What is `React.memo`?
 **Answer:** `React.memo` can skip rendering a function component when its props compare equal to the previous render. By default, it compares each prop with `Object.is`. It does not prevent renders caused by the component's own state or consumed context, and is most useful when profiling identifies avoidable expensive renders.
+```jsx
+const Row = React.memo(function Row({ item }) { /* expensive */ });
+// <Row item={obj} onClick={() => ...} /> still re-renders every time: the inline arrow is a new
+// function each render, so the prop is "different". Stabilize it with useCallback.
+```
 
 ### 14. What is Context, and when should it be used?
 **Answer:** Context lets a subtree read a value supplied by an ancestor without passing it through every intermediate component. It is useful for values such as theme, locale, or a stable service. Frequently changing, large application state may be better managed with more focused state boundaries or a dedicated store to limit broad re-renders.

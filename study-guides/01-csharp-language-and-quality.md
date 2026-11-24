@@ -43,13 +43,13 @@ The difference is not simply the number of language features a candidate can nam
 | Topic / feature | What to demonstrate | Common concern |
 |---|---|---|
 | `async` / `await` | Keep I/O-bound call chains asynchronous; propagate cancellation; handle failures | Blocking with `.Result` or `.Wait()` |
-| LINQ and collections | Choose the right operator and collection; understand deferred execution and repeated enumeration | Materializing large sequences unnecessarily |
+| LINQ and collections | Choose the right operator and collection; understand deferred execution and repeated enumeration | Materializing large sequences unnecessarily (e.g., `ToList()` on a whole table when you only need a few rows) |
 | Nullable reference types | Model optional values accurately and handle nulls explicitly | Suppressing warnings without understanding them |
 | Pattern matching and switch expressions | Express type/state checks clearly and handle unexpected cases | Large, fragile conditional chains |
 | Records, `init`, and immutability | Use value-based equality where appropriate; keep data contracts clear | Treating every entity as a record |
 | Generics and interfaces | Build type-safe reusable abstractions without overengineering | Abstractions with no practical benefit |
-| Dependency injection | Select correct service lifetimes and keep dependencies explicit | Captive dependencies, service locator patterns |
-| EF Core | Project only required data, inspect generated SQL, understand tracking and query translation | N+1 queries and accidental client-side work |
+| Dependency injection | Select correct service lifetimes and keep dependencies explicit | Captive dependencies (a long-lived singleton holding a short-lived scoped service), service locator patterns |
+| EF Core | Project only required data, inspect generated SQL, understand tracking and query translation | N+1 queries (1 query for a list, then 1 more per item) and accidental client-side work (filtering in C# after loading all rows) |
 | Exceptions and logging | Use exceptions for exceptional failures; log useful context without leaking secrets | Swallowing exceptions or logging sensitive data |
 | Testing | Unit-test business rules and integration-test important boundaries | Mocking every dependency and never testing integration |
 
@@ -206,12 +206,52 @@ var activeUsers = await _dbContext.Users
 
 **Why it helps:** Expresses the query's intent and lets EF Core translate supported operations into SQL.
 
+**Core idea:** An EF Core query is only a *description* until you call a method that runs it (`ToList`, `ToListAsync`, `First`, `Count`, `Any`, `foreach`). Everything chained **before** that call becomes SQL. Everything chained **after** it runs in C# memory. Most mistakes below come from running the query too early, too often, or too broadly.
+
 **Watch for**
-- Re-enumerating a deferred query.
-- Calling `ToList()` before filtering when the database could do the filtering.
-- Using methods that cannot be translated by the query provider.
-- Returning too many rows without pagination.
-- Using `Count()` when only existence (`Any()`) is needed.
+
+1. **Re-enumerating a deferred query: the same query hits the database every time you use it.**
+   ```csharp
+   var query = db.Users.Where(u => u.IsActive);   // nothing runs yet
+
+   var total = query.Count();                      // SQL query #1
+   var list  = query.ToList();                     // SQL query #2 (same filter, run again)
+   ```
+   Fix: run it once with `ToList()` and reuse the list, or accept two queries only if you need a fresh result each time.
+
+2. **Calling `ToList()` before filtering: loads every row, then filters in memory.**
+   ```csharp
+   // Bad: SELECT * FROM Users (all rows), then Where runs in C#
+   var bad = db.Users.ToList().Where(u => u.IsActive).ToList();
+
+   // Good: SELECT ... FROM Users WHERE IsActive = 1 (only matching rows)
+   var good = await db.Users.Where(u => u.IsActive).ToListAsync();
+   ```
+   Rule: keep `Where`, `OrderBy`, `Select`, and paging **before** `ToList()`; call `ToList()` last. See [Case 9](#case-9-unnecessary-full-entity-materialization).
+
+3. **Using methods the query provider cannot translate: EF Core cannot turn your C# method into SQL, so it throws at runtime.**
+   ```csharp
+   bool IsVip(User u) => u.Orders.Count > 10 && u.Country == "US";
+
+   db.Users.Where(u => IsVip(u)).ToList();   // InvalidOperationException: could not be translated
+   ```
+   Fix: write the condition inline using plain properties and operators (`u.Orders.Count > 10 && u.Country == "US"`), or use an EF-supported function such as `EF.Functions.Like`. Do **not** "fix" it by adding `ToList()` first, because that is mistake #2.
+
+4. **Returning too many rows without pagination: the table grows, the response grows with it.**
+   ```csharp
+   var page = await db.Users
+       .OrderBy(u => u.Id)            // stable order is required for predictable pages
+       .Skip((pageNumber - 1) * pageSize)
+       .Take(pageSize)                // e.g., 50 rows per request
+       .ToListAsync();
+   ```
+   Fine with 100 rows in development; slow and memory-heavy with 5 million in production.
+
+5. **Using `Count()` when you only need to know if something exists: counting scans all matches, `Any()` stops at the first.**
+   ```csharp
+   if (db.Users.Count(u => u.Email == email) > 0) { }   // counts every match
+   if (db.Users.Any(u => u.Email == email)) { }         // stops at first match (SQL: EXISTS)
+   ```
 
 `IEnumerable<T>` describes enumeration; `IQueryable<T>` describes a query that a provider may translate. Neither interface alone guarantees where or how efficiently execution occurs.
 
@@ -1202,14 +1242,16 @@ Last in, first out.
 
 ``` csharp
 var stack = new Stack<int>();
-stack.Push(10);
-stack.Push(20);
-int top = stack.Peek();       // 20, does not remove
-int removed = stack.Pop();    // 20, removes it
-bool hasTen = stack.Contains(10);
-stack.TryPop(out int value);
-stack.TryPeek(out int next);
+stack.Push(10);                // stack (top first): 10
+stack.Push(20);                // 20, 10
+int top = stack.Peek();        // 20, does not remove     -> 20, 10
+int removed = stack.Pop();     // 20, removes it          -> 10
+bool hasTen = stack.Contains(10);   // true
+bool ok = stack.TryPop(out int value); // true, value = 10 -> stack is now empty
+bool ok2 = stack.TryPeek(out int next); // false (empty), next = 0 (default); no exception
 ```
+
+`Pop`/`Peek` on an empty stack throw `InvalidOperationException`; the `Try...` versions return `false` instead.
 
 Key members: `Push`, `PushRange`, `Pop`, `TryPop`, `Peek`, `TryPeek`,
 `Contains`, `Clear`, `ToArray`, `CopyTo`, `Count`.
@@ -1220,13 +1262,15 @@ First in, first out.
 
 ``` csharp
 var queue = new Queue<string>();
-queue.Enqueue("first");
-queue.Enqueue("second");
-string next = queue.Peek();       // "first", does not remove
-string removed = queue.Dequeue(); // "first", removes it
-queue.TryDequeue(out string? item);
-queue.TryPeek(out string? front);
+queue.Enqueue("first");           // front -> back: first
+queue.Enqueue("second");          // first, second
+string next = queue.Peek();       // "first", does not remove -> first, second
+string removed = queue.Dequeue(); // "first", removes it      -> second
+bool ok = queue.TryDequeue(out string? item);  // true, item = "second" -> queue is now empty
+bool ok2 = queue.TryPeek(out string? front);   // false (empty), front = null; no exception
 ```
+
+`Peek`/`Dequeue` on an empty queue throw `InvalidOperationException`; the `Try...` versions return `false` instead.
 
 Key members: `Enqueue`, `EnqueueRange` (modern .NET), `Dequeue`,
 `TryDequeue`, `Peek`, `TryPeek`, `Contains`, `Clear`, `ToArray`,
@@ -1243,14 +1287,14 @@ value is O(n). It does not support index-based access.
 
 ``` csharp
 var linked = new LinkedList<string>();
-linked.AddFirst("B");
-linked.AddFirst("A");
-linked.AddLast("D");
-LinkedListNode<string>? node = linked.Find("B");
+linked.AddFirst("B");                 // B
+linked.AddFirst("A");                 // A, B
+linked.AddLast("D");                  // A, B, D
+LinkedListNode<string>? node = linked.Find("B"); // O(n) search; null if not found
 if (node is not null)
 {
-    linked.AddAfter(node, "C");
-    linked.Remove(node);
+    linked.AddAfter(node, "C");       // A, B, C, D  (O(1): just relinks neighbours)
+    linked.Remove(node);              // A, C, D     (O(1) because we already hold the node)
 }
 ```
 
@@ -1284,6 +1328,8 @@ using System.Collections.Immutable;
 
 ImmutableList<int> original = ImmutableList.Create(1, 2);
 ImmutableList<int> updated = original.Add(3); // original remains unchanged
+// original: 1, 2    updated: 1, 2, 3
+// Mistake: original.Add(3);  // result thrown away, so nothing visibly changes
 ```
 
 ##### Read-only wrappers
@@ -1297,6 +1343,15 @@ ImmutableList<int> updated = original.Add(3); // original remains unchanged
 
 A wrapper does not make the underlying collection immutable; changes
 made through another reference can still be visible.
+
+``` csharp
+var inner = new List<int> { 1, 2 };
+var view = new ReadOnlyCollection<int>(inner); // callers of `view` cannot Add/Remove
+inner.Add(3);                                  // whoever holds `inner` still can
+// view now shows 1, 2, 3
+```
+
+If you need a true snapshot, copy (`inner.ToList()`) or use an immutable collection.
 
 ##### Thread-safe and producer/consumer collections
 
@@ -1329,7 +1384,20 @@ Namespace: `System.Collections.Concurrent`.
   -----------------------------------------------------------------------------------------
 
 Thread-safe collection operations do not automatically make a multi-step
-business operation atomic.
+business operation atomic. Each single call is safe, but another thread
+can run between two calls (a "check-then-act" race):
+
+``` csharp
+// Assumes: var stock = new ConcurrentDictionary<string, int>();
+// Bad: two threads can both see 1 and both "sell" the last item.
+if (stock["apple"] > 0)
+    stock["apple"] = stock["apple"] - 1;
+
+// Good: one atomic call; the lambda may be retried, so keep it side-effect free.
+stock.AddOrUpdate("apple", 0, (key, current) => Math.Max(0, current - 1));
+```
+
+For larger multi-step rules, use a `lock` around the whole operation.
 
 ##### Specialized collections
 
@@ -1366,8 +1434,11 @@ For new general-purpose code, prefer generic collections such as
 ##### Memory and views (not ordinary collections)
 
 -   `Span<T>` / `ReadOnlySpan<T>` --- stack-only views over contiguous
-    memory; members include `Length`, `Slice`, `CopyTo`, `ToArray`,
-    `IndexOf`.
+    memory (they are `ref struct`s: they cannot be fields of a normal
+    class, boxed, or used across `await`); members include `Length`,
+    `Slice`, `CopyTo`, `ToArray`, `IndexOf`. A slice shares the original
+    memory, so it avoids copying: `arr.AsSpan(2, 3)` is a window onto
+    `arr`, and writing to it changes `arr`.
 -   `Memory<T>` / `ReadOnlyMemory<T>` --- heap-storable memory views
     suitable for async workflows; members include `Length`, `Slice`,
     `Span`, `ToArray`.
@@ -1416,10 +1487,20 @@ Common LINQ operators: `Where`, `Select`, `SelectMany`, `OrderBy`,
 `Min`, `Max`, `Average`, `Aggregate`, `SequenceEqual`, `ToArray`,
 `ToList`, `ToDictionary`, `ToHashSet`, `ToLookup`.
 
-`IQueryable<T>` builds expression trees for a query provider (for
-example, EF Core); `IEnumerable<T>` generally executes .NET iteration.
-With EF Core, be mindful of which operators run in the database and when
-materialization occurs.
+`IQueryable<T>` builds expression trees (data describing the query) that
+a query provider (for example, EF Core) translates to SQL;
+`IEnumerable<T>` runs the lambdas as ordinary .NET code in memory. With
+EF Core, be mindful of which operators run in the database and when
+materialization (actually running the query and loading results) occurs:
+
+``` csharp
+// Assumes: db.Users is an IQueryable<User>.
+// Bad: AsEnumerable() switches to in-memory LINQ, so ALL rows are loaded first.
+var bad = db.Users.AsEnumerable().Where(u => u.IsActive).Take(10).ToList();
+
+// Good: stays IQueryable, so WHERE and TOP 10 are sent to the database.
+var good = db.Users.Where(u => u.IsActive).Take(10).ToList();
+```
 
 #### 7. Quick selection guide
 
@@ -1510,7 +1591,16 @@ if (user is not null && user.IsActive)
 var displayName = user?.Name ?? "Guest";
 ```
 
-**Review note:** Do not put important side effects in complicated Boolean expressions. Prefer a normal `if` when it makes the behavior clearer.
+**Review note:** Do not put important side effects in complicated Boolean expressions. Because the right side may never run, the side effect may silently not happen. Prefer a normal `if` when it makes the behavior clearer.
+
+```csharp
+// Bad: Save() is skipped whenever IsValid() is false, which is easy to miss.
+if (IsValid(order) && Save(order)) { ... }
+
+// Good: the order of steps is explicit.
+if (!IsValid(order)) return;
+var saved = Save(order);
+```
 
 ##### 2.2 Ternary operator
 
@@ -1538,7 +1628,7 @@ string name = "Guest";
 if (user is not null && user.Name is not null)
     name = user.Name;
 
-// Modern
+// Modern (also an alternative to "Old"; do not declare `name` twice in one method)
 string name = user?.Name ?? "Guest";
 ```
 
@@ -1575,7 +1665,8 @@ public decimal CalculateTotal(decimal price, int quantity)
 ##### 2.6 Dictionary lookup
 
 ```csharp
-// Avoid two lookups
+// Assumes: Dictionary<string, decimal> rates; decimal defaultRate; string country; decimal amount.
+// Avoid two lookups (ContainsKey hashes the key, then rates[country] hashes it again)
 if (rates.ContainsKey(country))
     return amount * rates[country];
 
@@ -1657,6 +1748,14 @@ var body = await httpClient.GetStringAsync(url, cancellationToken);
 - Use `Task.WhenAll` for independent async operations only when concurrency and downstream capacity are appropriate.
 - Avoid unbounded fan-out that can overload a database or external service.
 
+What these mean and why they hurt:
+
+| Bad | Why it hurts | Good |
+|---|---|---|
+| `var body = client.GetStringAsync(url).Result;` | Blocks a thread until the I/O finishes (called "sync-over-async"). Under load the thread pool runs out of threads (starvation), and in UI/legacy ASP.NET it can deadlock because the continuation needs the blocked thread. | `var body = await client.GetStringAsync(url, ct);` |
+| `await Task.Run(() => client.GetStringAsync(url))` | Moves I/O onto a pool thread for no benefit; the call was already non-blocking. | Call and `await` the async method directly. `Task.Run` is for CPU-bound work. |
+| `await Task.WhenAll(ids.Select(id => LoadAsync(id)))` over 50,000 ids | Starts 50,000 database calls at once, exhausting the connection pool or hitting rate limits. | Process in batches or limit concurrency, e.g. `Parallel.ForEachAsync(ids, new ParallelOptions { MaxDegreeOfParallelism = 8 }, async (id, ct) => await LoadAsync(id, ct))`. |
+
 ##### EF Core query shape
 
 See the projection example in section 2.6 above; EF Core performance is covered in depth in [EF Core, LINQ, and SQL](05-efcore-linq-and-sql.md). Key review checks:
@@ -1664,12 +1763,34 @@ See the projection example in section 2.6 above; EF Core performance is covered 
 - Project only the fields needed by the caller.
 - Use `AsNoTracking()` for read-only entity queries when change tracking is unnecessary.
 - Filter and sort in SQL; avoid materializing a large table before filtering.
-- Check for N+1 queries and unnecessary `Include`s.
+- Check for N+1 queries (one query for a list, then one more query per row) and unnecessary `Include`s (joins that load related data nobody uses).
 - Add indexes based on query patterns and execution plans, not guesswork.
 - Use pagination for large result sets; consider keyset pagination when offset paging becomes expensive.
 - Use transactions when multiple writes must succeed or fail together.
 - Do not share one `DbContext` across concurrent operations; it is not thread-safe.
 - Measure before introducing compiled queries, pooling, or low-level optimizations.
+
+Examples of the three most common problems:
+
+```csharp
+// Assumes: db is a DbContext with Orders (each has a Customer navigation property).
+// N+1 (bad): 1 query for orders + 1 query PER order when o.Customer lazy-loads. 100 orders = 101 queries.
+foreach (var o in db.Orders.ToList())
+    Console.WriteLine(o.Customer.Name);
+
+// Fix: one query that joins and returns only what is needed.
+var rows = db.Orders.Select(o => new { o.Id, CustomerName = o.Customer.Name }).ToList();
+
+// Offset paging (slow on deep pages): the database still walks past the first 100,000 rows.
+db.Orders.OrderBy(o => o.Id).Skip(100_000).Take(20);
+
+// Keyset paging: jump straight to rows after the last id the client saw (needs an index on Id).
+db.Orders.Where(o => o.Id > lastSeenId).OrderBy(o => o.Id).Take(20);
+
+// Shared DbContext (bad): two concurrent operations on one context throw or corrupt state.
+await Task.WhenAll(db.Orders.CountAsync(), db.Customers.CountAsync());
+// Fix: one DbContext per concurrent operation (e.g. create scopes via IDbContextFactory).
+```
 
 #### 5. REST API, security, and reliability
 
@@ -1683,11 +1804,22 @@ A senior review should ask:
 - Are rate limits needed for the endpoint?
 - Are secrets stored in an approved secret store or managed identity flow, not source control?
 - Are logs useful without exposing credentials, tokens, or sensitive personal data?
-- Are retries limited to transient failures and safe to repeat?
-- Do state-changing operations need idempotency or concurrency control?
-- Are CORS and CSRF protections appropriate for the actual authentication model?
+- Are retries limited to transient failures (timeouts, 503s; not validation errors) and safe to repeat?
+- Do state-changing operations need idempotency (repeating the same request has the same effect, so a retried "charge card" does not charge twice) or concurrency control (stopping two simultaneous edits from silently overwriting each other)?
+- Are CORS (which browser sites may call the API) and CSRF (a malicious site making the browser send an authenticated request, a risk mainly with cookie-based auth) protections appropriate for the actual authentication model?
 
 **Important:** Parameterized EF Core queries help prevent SQL injection, but raw SQL and dynamic query construction still need careful review. Input validation is not a substitute for authorization.
+
+```csharp
+// Assumes: string name comes from the request.
+// Bad: user input is pasted into the SQL text; name = "x'; DROP TABLE Users;--" becomes SQL.
+db.Users.FromSqlRaw($"SELECT * FROM Users WHERE Name = '{name}'");
+
+// Good: FromSql / FromSqlInterpolated turn the interpolated value into a SQL parameter.
+db.Users.FromSql($"SELECT * FROM Users WHERE Name = {name}");
+```
+
+Validation checks that input is well-formed; authorization checks that this user may touch this record. A valid `orderId` still must belong to the caller.
 
 #### 6. Clean Architecture and CQRS
 
@@ -1737,7 +1869,7 @@ A refactor should preserve externally observable behavior unless the change expl
 **Answer:** `Task.WhenAll` coordinates multiple tasks, often asynchronous I/O tasks. `Parallel.ForEach` is for parallel synchronous work; for async iteration, consider `Parallel.ForEachAsync` with an explicit degree of parallelism. Choose based on workload and resource limits.
 
 ##### Q10. How do you prevent race conditions when updating data?
-**Answer:** Define the consistency requirement first. Depending on the case, use database transactions, optimistic concurrency tokens (such as a row version), unique constraints, appropriate isolation, or atomic updates. Application-level checks alone may not protect against concurrent requests.
+**Answer:** Define the consistency requirement first. Depending on the case, use database transactions, optimistic concurrency tokens (such as a row version), unique constraints, appropriate isolation, or atomic updates. Application-level checks alone may not protect against concurrent requests: two requests can both run `if (!exists) insert` and both pass the check before either inserts; a unique constraint makes the database reject the second one. A row version (concurrency token) makes an `UPDATE ... WHERE Id = @id AND RowVersion = @old` fail if someone else changed the row first.
 
 ##### Q11. How would you investigate a slow API?
 **Answer:** Establish a baseline, inspect latency percentiles and traces, separate time spent in the application, database, and external dependencies, check query plans and N+1 behavior, review allocations and serialization, then make and measure one targeted change.
@@ -1961,7 +2093,7 @@ propertyInfo?.SetValue(obj, 100);              // write works the same way
 **Answer:** In C#, a method signature consists of its <b>name and parameter types</b>, order, and passing modes (`ref`, `out`, or `in`). Return type and parameter names are not part of the signature, so methods cannot be overloaded by return type alone.
 
 ###### 2. What is the order of constructor execution? (PDF p. 4)
-**Answer:** For a derived object, static initialization runs first (base type before derived type); then instance field initializers run base-to-derived, followed by instance constructors base-to-derived. A derived constructor's `base(...)` constructor call happens before its own body.
+**Answer:** For a derived object: static initialization happens once, before first use of each type. Then, on `new Derived()`, the derived class's instance field initializers run first, then control passes up to the base constructor (base field initializers, then the base constructor body), and finally the derived constructor body runs. So field initializers run derived-to-base, and constructor bodies run base-to-derived. Example: with `class B { public B() => Log("B ctor"); }` and `class D : B { int x = Init(); public D() => Log("D ctor"); }`, the output order is `Init`, `B ctor`, `D ctor`.
 
 ###### 3. What is a destructor, and how many can there be in a class? (PDF p. 4)
 **Answer:** C#'s destructor syntax (`~Type()`) declares a finalizer, called nondeterministically by the garbage collector before reclaiming an object. A class can declare at most one finalizer, and it cannot be called directly.
@@ -2060,7 +2192,7 @@ propertyInfo?.SetValue(obj, 100);              // write works the same way
 **Answer:** Release each unmanaged allocation or handle using its matching API (for example, `free` for `malloc`, `CloseHandle` for a Windows handle). In .NET, wrap owned native resources in `SafeHandle`/`IDisposable` and dispose deterministically; a finalizer is only a fallback.
 
 ###### 7. `throw` vs. `throw ex` (PDF p. 5)
-**Answer:** Inside a catch block, `throw;` rethrows while preserving the original stack trace. `throw ex;` resets the visible stack origin to that line, obscuring the original location; use `throw;` unless intentionally throwing a new exception with the original as its inner exception.
+**Answer:** Inside a catch block, `throw;` rethrows while preserving the original stack trace. `throw ex;` resets the visible stack origin to that line, obscuring the original location; use `throw;` unless intentionally throwing a new exception with the original as its inner exception. Example: `catch (Exception ex) { Log(ex); throw; }` keeps the trace pointing at the real failure; `throw ex;` makes it point at the `throw ex;` line.
 
 ###### 8. What are access modifiers? (PDF p. 5)
 **Answer:** Access modifiers control visibility: `public`, `private`, `protected`, `internal`, `protected internal`, and `private protected` (with file-local `file` for top-level types in modern C#). Choose the narrowest visibility that supports intended use.
@@ -2147,7 +2279,7 @@ propertyInfo?.SetValue(obj, 100);              // write works the same way
 **Answer:** `Task` is a reference type and is the normal, simpler choice. `ValueTask<T>` can avoid allocation when results are often available synchronously, but is more complex and has consumption constraints; use it only after measuring a meaningful hot-path benefit.
 
 ###### 36. What is thread-pool starvation? (PDF p. 6)
-**Answer:** It occurs when pool threads are blocked or consumed faster than the pool can make them available, delaying queued work. Avoid sync-over-async and unnecessary blocking, use asynchronous I/O, and diagnose thread-pool queues/latency under load.
+**Answer:** It occurs when pool threads are blocked or consumed faster than the pool can make them available, delaying queued work. Typical cause: many requests each call `.Result`/`.Wait()` on an async call (sync-over-async), so every pool thread sits blocked waiting for work that needs a free pool thread to finish; the app then looks hung or very slow even though the CPU is idle. Avoid sync-over-async and unnecessary blocking, use asynchronous I/O, and diagnose thread-pool queues/latency under load.
 
 ###### 37. What is `IAsyncStateMachine`? (PDF p. 6)
 **Answer:** It is the runtime interface implemented by compiler-generated async state machines, with `MoveNext()` advancing execution and `SetStateMachine()` supporting state-machine setup. Application code normally uses `async`/`await` rather than implementing it directly.

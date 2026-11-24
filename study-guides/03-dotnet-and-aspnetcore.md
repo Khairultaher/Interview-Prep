@@ -191,10 +191,29 @@ app.MapGet("/", () => "Hello from ASP.NET Core");
 app.Run();
 ```
 
-**Important:** In modern ASP.NET Core, the `next` delegate supplied to
-`app.Use` is commonly called as `await next(context)`. The `Use`
-overload that accepts `RequestDelegate` differs from older examples that
-show a parameterless `next()`.
+For `GET /` the console prints `Incoming: GET /` first, then the endpoint runs, then `Outgoing: 200`.
+
+**Important:** `app.Use` has two overloads, and the two call styles are
+easy to confuse:
+
+``` csharp
+// Overload 1: next is Func<Task>  -> call it with no arguments
+app.Use(async (context, next) => { await next(); });
+
+// Overload 2 (.NET 6+): next is RequestDelegate -> pass the context in
+app.Use(async (HttpContext context, RequestDelegate next) =>
+{
+    await next(context);
+});
+```
+
+Both continue the pipeline in exactly the same way. If you see
+`next()` in an older sample and `next(context)` in a newer one, that is
+only a different overload, not different behavior. The compiler picks
+the overload from how the lambda body calls `next`: `next()` binds
+overload 1, `next(context)` binds overload 2. This guide uses
+`next(context)`. (Overload 1 allocates a closure per request, which is
+why `next(context)` is preferred.)
 
 #### 4. Use, Run, Map, and UseWhen
 
@@ -492,14 +511,14 @@ if (!app.Environment.IsDevelopment())
     app.UseHsts();
 }
 
-app.UseHttpsRedirection();
-app.UseRouting();
+app.UseHttpsRedirection();   // http:// -> https:// redirect
+app.UseRouting();            // picks the endpoint (controller action) for this URL
 
-app.UseCors("DefaultPolicy"); // If CORS is configured
-app.UseAuthentication();
-app.UseAuthorization();
+app.UseCors("DefaultPolicy"); // If CORS is configured; after routing, before auth
+app.UseAuthentication();     // who is the caller? sets HttpContext.User
+app.UseAuthorization();      // may that user reach the endpoint chosen by routing?
 
-app.MapControllers();
+app.MapControllers();        // the endpoints themselves run last
 
 app.Run();
 ```
@@ -543,14 +562,33 @@ Common middleware:
                                       configured
   -----------------------------------------------------------------------
 
-**Ordering reminders:** - Exception-handling middleware should be early
-enough to catch errors from components downstream of it. -
-Authentication should normally run before authorization. - Routing must
-select an endpoint before endpoint-specific authorization metadata can
-be evaluated. - A middleware that short-circuits means later middleware
-and the endpoint may never execute. - Middleware can observe static-file
-requests only if it is registered before static-file middleware;
-static-file middleware may end the pipeline when it serves a file.
+**Ordering reminders** (each rule, and what breaks if you violate it):
+
+1.  **Exception handling first.** A middleware can only catch exceptions
+    thrown by middleware registered *after* it (they run inside its
+    `try`). If `UseExceptionHandler` is registered last, an exception in
+    an earlier component escapes as a raw 500 with no friendly error.
+2.  **Authentication before authorization.** Authentication builds
+    `HttpContext.User` from the token/cookie; authorization then checks
+    that user. Reversed, authorization sees an anonymous user and every
+    `[Authorize]` endpoint returns 401/403 even for valid logins.
+3.  **Routing before authorization.** Routing picks the endpoint;
+    authorization reads that endpoint's `[Authorize]` metadata. No
+    selected endpoint means nothing to check.
+4.  **Short-circuiting skips everything after it.** If a middleware
+    returns without calling `next`, later middleware and the endpoint
+    never run (that is how static files and rate limiters reject early).
+5.  **Static files hide requests from later middleware.** A logger placed
+    *after* `UseStaticFiles` never sees `/logo.png`, because the static
+    file middleware answers and stops. Register the logger before it.
+
+``` csharp
+app.UseAuthorization();   // BAD: User is still anonymous here
+app.UseAuthentication();  // too late; ran after the check
+
+app.UseAuthentication();  // GOOD: identify the user first
+app.UseAuthorization();   // then decide what they may access
+```
 
 #### 8. MVC filters and attributes
 
@@ -565,12 +603,15 @@ An attribute is metadata attached to code. Examples:
 public IActionResult GetById(int id) => Ok();
 ```
 
-These attributes do not all work the same way: - `[HttpGet]` contributes
-routing/HTTP-method metadata. - `[ProducesResponseType]` contributes
-API-description metadata. - `[Authorize]` supplies authorization
-metadata consumed by the ASP.NET Core authorization system. - A custom
-filter attribute can implement a filter interface or select a filter
-implementation.
+These attributes do not all work the same way:
+
+-   `[HttpGet]` contributes routing/HTTP-method metadata.
+-   `[ProducesResponseType]` contributes API-description metadata (used
+    by Swagger/OpenAPI docs; it does not change runtime behavior).
+-   `[Authorize]` supplies authorization metadata consumed by the
+    ASP.NET Core authorization system.
+-   A custom filter attribute can implement a filter interface or select
+    a filter implementation.
 
 Therefore, **"attribute" and "filter" are not synonyms**. An attribute
 may configure framework behavior without being an MVC filter.
@@ -582,9 +623,13 @@ has selected an MVC endpoint. They can access MVC-specific information
 such as action arguments, model state, controller/action descriptors,
 and action results.
 
-A typical MVC filter can be: - Registered globally. - Applied to a
-controller. - Applied to an action. - Created through an attribute,
-`ServiceFilter`, `TypeFilter`, or a global DI registration.
+A typical MVC filter can be:
+
+-   Registered globally (runs for every action).
+-   Applied to a controller (runs for all its actions).
+-   Applied to one action.
+-   Created through an attribute, `ServiceFilter`, `TypeFilter`, or a
+    global DI registration.
 
 Filters do not run for every HTTP request. For example, a request served
 directly by static-file middleware does not execute MVC action filters.
@@ -629,9 +674,23 @@ Filters with before/after methods generally wrap later stages. If filter
 A wraps filter B, the before methods run A → B and the after methods run
 B → A.
 
-Filter ordering can be affected by: - Filter type/stage. - Scope:
-global, controller, or action. - `IOrderedFilter.Order`. -
-Framework-defined behavior for a particular filter stage.
+Filter ordering can be affected by:
+
+-   Filter type/stage (authorization always before action filters, and so
+    on).
+-   Scope: global, controller, or action.
+-   `IOrderedFilter.Order` (a lower number runs first).
+-   Framework-defined behavior for a particular filter stage.
+
+Within one stage, the default order is global, then controller, then
+action for the *before* methods, and the reverse for the *after*
+methods. Example with two action filters, a global `A` and an action-level
+`B`:
+
+``` text
+A.OnActionExecuting  ->  B.OnActionExecuting  ->  Action
+A.OnActionExecuted   <-  B.OnActionExecuted   <-  (unwinds in reverse)
+```
 
 Do not assume that every filter stage has identical ordering rules.
 Authorization filters run early; resource filters surround much of the
@@ -979,6 +1038,63 @@ mechanism.
 12. **Using a custom filter instead of built-in authorization or
     validation without a reason.** Prefer framework features where
     possible.
+
+##### The mistakes that cause the most bugs, with bad and good code
+
+**Mistake 4: scoped service in a conventional middleware constructor.**
+The middleware object is built once at startup, so a scoped service
+injected into the constructor is captured and reused by every request
+(or the app throws "Cannot consume scoped service from singleton").
+
+``` csharp
+// BAD: one DbContext shared by all requests, not thread-safe
+public MyMiddleware(RequestDelegate next, AppDbContext db) { ... }
+
+// GOOD: resolved fresh for each request
+public async Task InvokeAsync(HttpContext context, AppDbContext db) { ... }
+```
+
+**Mistake 5: `UseWhen` is not "path only".** It takes any predicate
+(header, method, user). For a path prefix, `Map` removes the prefix from
+`Request.Path`; `UseWhen` keeps the full path.
+
+``` csharp
+app.Map("/admin", b => b.Run(ctx => ctx.Response.WriteAsync(ctx.Request.Path))); // "/admin/x" prints "/x"
+app.UseWhen(ctx => ctx.Request.Headers.ContainsKey("X-Debug"), b => b.Use(...)); // header-based branch
+```
+
+**Mistake 9: changing headers after the response has started.** Once any
+body bytes are sent, the status line and headers are already on the
+wire, so setting them throws `InvalidOperationException` ("Headers are
+read-only, response has already started") or is silently ignored.
+
+``` csharp
+// BAD: the endpoint already wrote the body by the time we get here
+await next(context);
+context.Response.Headers["X-Foo"] = "1";      // too late
+
+// GOOD: set before next, or register a callback that runs just before sending
+context.Response.OnStarting(() =>
+{
+    context.Response.Headers["X-Foo"] = "1";  // runs right before headers are sent
+    return Task.CompletedTask;
+});
+await next(context);
+```
+
+**Mistake 10: blocking in async code.** `.Result` / `.Wait()` holds a
+thread while waiting for work that itself needs a thread, so under load
+the thread pool runs out and requests stall (starvation).
+
+``` csharp
+var user = repo.GetAsync(id).Result;   // BAD: blocks a thread
+var user = await repo.GetAsync(id);    // GOOD: thread is released while waiting
+```
+
+**Mistake 8: relying only on exception filters.** An exception thrown by
+your own middleware (say, in a logging middleware) or by routing never
+enters the MVC filter pipeline, so an exception filter cannot see it.
+`UseExceptionHandler` covers both.
 
 ##### A useful mental model
 
@@ -1423,6 +1539,8 @@ They work well together: middleware for logging and exception handling, an actio
 
 ### Production-grade example: API key middleware
 
+Assumes `ApiKey` is set in configuration (for example `appsettings.json` or a secret store). Register it early so unauthenticated callers are rejected before any real work runs.
+
 ```csharp
 public class ApiKeyMiddleware
 {
@@ -1444,6 +1562,8 @@ public class ApiKeyMiddleware
             return; // short-circuit: later middleware never runs
         }
 
+        // key is a StringValues; != compares it to the configured string.
+        // (For real secrets prefer CryptographicOperations.FixedTimeEquals to avoid timing leaks.)
         if (key != _apiKey)
         {
             context.Response.StatusCode = 403;
@@ -1461,25 +1581,41 @@ app.UseMiddleware<ApiKeyMiddleware>();
 
 ### Rate limiting (.NET 7+)
 
+Rate limiting caps how many requests a caller may make in a time window, so one noisy client cannot starve the rest. A **fixed window** counts requests in each time slice and resets at the boundary.
+
 ```csharp
 builder.Services.AddRateLimiter(options =>
 {
-    options.AddFixedWindowLimiter("fixed", config =>
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests; // what rejected callers receive
+    options.AddFixedWindowLimiter("fixed", config =>   // "fixed" = policy name
     {
-        config.PermitLimit = 5;
-        config.Window = TimeSpan.FromSeconds(10);
+        config.PermitLimit = 5;                         // at most 5 requests...
+        config.Window = TimeSpan.FromSeconds(10);       // ...per 10-second window; the 6th gets 429
     });
 });
 
-app.UseRateLimiter();
+app.UseRateLimiter();   // must come before the endpoints it protects
+
+// The policy does nothing until you attach it to an endpoint:
+app.MapGet("/search", () => "ok").RequireRateLimiting("fixed");
+// (controllers: [EnableRateLimiting("fixed")])
 ```
 
 ### High-performance tips
 
-- Always `async`/`await`; never block with `.Result` or `.Wait()`.
-- Don't allocate large objects per request; cache static objects such as `JsonSerializerOptions` outside `InvokeAsync`.
-- Avoid reading the whole request body unless you must, because it's expensive.
-- `HttpContext.Features` gives low-level access with low overhead.
+- Always `async`/`await`; never block with `.Result` or `.Wait()` (blocking holds a thread, so under load the thread pool runs dry and all requests slow down).
+- Don't allocate large objects per request; cache static objects such as `JsonSerializerOptions` outside `InvokeAsync`. A new `JsonSerializerOptions` rebuilds its internal type metadata cache on first use, so creating one per request repeats that cost every time:
+
+  ```csharp
+  // BAD: new options (and a cold cache) on every request
+  var json = JsonSerializer.Serialize(dto, new JsonSerializerOptions { WriteIndented = true });
+
+  // GOOD: one shared instance
+  private static readonly JsonSerializerOptions Options = new() { WriteIndented = true };
+  var json = JsonSerializer.Serialize(dto, Options);
+  ```
+- Avoid reading the whole request body into memory unless you must: a 100 MB upload read into a string costs 100 MB+ per request. Stream it instead.
+- `HttpContext.Features` gives low-level access with low overhead (direct access to server features such as the raw request body or connection info, bypassing the higher-level wrappers).
 
 ### Quick Q&A
 
@@ -1491,11 +1627,22 @@ app.UseRateLimiter();
 
 ### Pitfalls interviewers ask about
 
-- ❌ Synchronous or blocking code inside middleware.
-- ❌ Wrong registration order (e.g. `UseCors` or `UseRouting` placed after `MapControllers`).
-- ❌ Forgetting `await next(context)`, which silently ends the pipeline.
-- ❌ Writing to the response and then calling `next`, which causes "headers already sent" errors.
-- ❌ Not limiting request body size, which is a DoS risk.
+Each pitfall below shows what goes wrong and the fix:
+
+1. **Blocking code in middleware.** `Thread.Sleep(...)` or `.Result` ties up a thread per request, so a burst of requests exhausts the thread pool and the whole app stalls. Fix: `await Task.Delay(...)` / `await` the async API.
+2. **Wrong registration order.** Registering `UseCors` after the endpoints are mapped (or after a middleware that already responded) means CORS headers are never added, so the browser blocks the call even though the API worked. Fix: place `UseRouting` -> `UseCors` -> `UseAuthentication` -> `UseAuthorization` -> endpoints, in that order.
+3. **Not calling `next`.** If a middleware does its work but forgets `await next(context)`, the request ends there with an empty 200 and the endpoint never runs, with no error. Fix: call `next` on every path that should continue; `return` early only deliberately.
+4. **Writing the body, then calling `next`.** Once you write to the response, headers are sent. A later component that sets a header or status code then throws "headers already sent" (or is ignored).
+
+   ```csharp
+   // BAD
+   await context.Response.WriteAsync("hello");
+   await next(context);            // endpoint now cannot change status or headers
+
+   // GOOD: call next first, or write and return without calling next
+   await next(context);
+   ```
+5. **No request body size limit.** A client can upload gigabytes and exhaust memory or disk (a denial-of-service, "DoS", attack). Fix: Kestrel's `MaxRequestBodySize` (default about 30 MB) or `[RequestSizeLimit(1_000_000)]` on the endpoint, and do not raise it globally without reason.
 
 > **One-paragraph summary:** Middleware in ASP.NET Core is a chain-of-responsibility pipeline. Each component receives `HttpContext`, may do work before calling `next`, and may do work on the way back. Registration order decides the whole request flow. Use middleware for global, cross-cutting concerns; use filters for controller/action-specific logic.
 
@@ -1639,6 +1786,65 @@ readiness---not as a substitute for measurement.
     conditions.
 -   [ ] Add regression tests or load-test thresholds for critical
     endpoints.
+
+#### Checklist terms explained, with bad and good examples
+
+-   **p50 / p95 / p99 latency:** the time within which 50% / 95% / 99%
+    of requests finish. If p50 is 40 ms but p99 is 3 s, 1 request in 100
+    is painfully slow even though the average looks fine. Track the tail,
+    not the mean.
+-   **Sync-over-async:** calling an async method and blocking for its
+    result. The thread sits idle, so under load the thread pool runs out
+    of threads and *every* request queues (thread-pool starvation).
+
+    ``` csharp
+    var order = _repo.GetAsync(id).Result;   // BAD: blocks a pool thread
+    var order = await _repo.GetAsync(id);    // GOOD
+    ```
+-   **`Task.Run` around I/O:** `await Task.Run(() => _http.GetAsync(url))`
+    moves work to another pool thread that then just waits. You pay for an
+    extra thread and gain nothing. Use `Task.Run` only for CPU-heavy work
+    off a UI thread, not to "make I/O async".
+-   **N+1 queries:** one query for the list, then one more query per row.
+    100 orders means 101 round trips.
+
+    ``` csharp
+    // BAD: 1 query for orders + 1 query per order for its customer
+    foreach (var o in db.Orders.ToList())
+        Console.WriteLine(o.Customer.Name);   // with lazy loading enabled, this fires a query each time
+
+    // GOOD: one joined query returning only what is needed
+    var rows = await db.Orders
+        .Select(o => new { o.Id, CustomerName = o.Customer.Name })
+        .ToListAsync();
+    ```
+-   **`AsNoTracking()` and returning entities:** by default EF Core
+    keeps a snapshot of each loaded entity to detect changes. For
+    read-only queries that is wasted memory and CPU; add
+    `.AsNoTracking()` (or project with `Select`, which is not tracked).
+    Returning an entity directly from an API also leaks every column
+    (such as `PasswordHash`) and can serialize huge or circular object
+    graphs; return a small DTO (data transfer object) instead.
+-   **Cache key leaking users:** `cache.Set("profile", data)` stores one
+    value for everyone, so user B receives user A's profile.
+
+    ``` csharp
+    cache.Set("profile", profile);                  // BAD: shared key
+    cache.Set($"profile:{tenantId}:{userId}", profile);  // GOOD: key includes who it is for
+    ```
+-   **Retry storm:** when a dependency slows down, every client retries
+    immediately, multiplying traffic by the retry count and keeping the
+    dependency down. Fix: a small retry cap, exponential backoff (wait
+    longer each time) with jitter (random extra delay), and timeouts.
+-   **Rate-limiter partition key:** the attribute that decides whose
+    requests are counted together (for example per user ID or API key).
+    Partitioning by nothing means one global bucket where a single abusive
+    client uses up the limit for everyone; partitioning by user gives each
+    caller their own limit.
+-   **`HttpClient` management:** `new HttpClient()` per call can exhaust
+    sockets (the closed connections linger in TIME_WAIT), while a single
+    static one never refreshes DNS. `IHttpClientFactory` pools and
+    recycles the underlying handlers to avoid both.
 
 ------------------------------------------------------------------------
 
@@ -2020,15 +2226,32 @@ Singleton services must be designed for concurrency. Avoid storing request- or o
 ##### Example: observing instance reuse
 
 ```csharp
-public sealed class InstanceMarker
+// Each instance gets its own random Id, so the Id tells us which instance we got.
+public class Marker
 {
     public Guid Id { get; } = Guid.NewGuid();
 }
+public sealed class TransientMarker : Marker { }
+public sealed class ScopedMarker : Marker { }
+public sealed class SingletonMarker : Marker { }
 
 // Registration:
 services.AddTransient<TransientMarker>();
 services.AddScoped<ScopedMarker>();
 services.AddSingleton<SingletonMarker>();
+
+// Resolution (provider = the built root provider):
+using var scope1 = provider.CreateScope();
+using var scope2 = provider.CreateScope();
+
+var a1 = scope1.ServiceProvider.GetRequiredService<ScopedMarker>();
+var a2 = scope1.ServiceProvider.GetRequiredService<ScopedMarker>();
+var b1 = scope2.ServiceProvider.GetRequiredService<ScopedMarker>();
+// a1.Id == a2.Id  (same scope, same instance)
+// a1.Id != b1.Id  (new scope, new instance)
+
+// SingletonMarker: same Id from scope1 and scope2.
+// TransientMarker: a different Id on every GetRequiredService call.
 ```
 
 Resolve the same scoped service twice from one scope and its `Id` remains the same. Resolve it from a second scope and the `Id` differs. A singleton's `Id` stays the same across both scopes. A transient normally has a different `Id` on each separate resolution.
@@ -2082,6 +2305,8 @@ public sealed class ReportService(AppDbContext dbContext)
 > Cannot consume scoped service from singleton.
 
 Even where validation is disabled, the design is unsafe: the context may be used across unrelated operations, may not be disposed when expected, and is not thread-safe.
+
+Concrete scenario: request 1 loads a report through the singleton, and request 2 arrives while request 1 is still running. Both requests now use the *same* `AppDbContext` at the same time. EF Core throws "A second operation was started on this context instance before a previous operation completed", or silently mixes up tracked entities. Over days the shared context also keeps every entity it ever loaded, so memory grows until the app is restarted.
 
 **Best fix:** make the consumer scoped if it represents one operation:
 
@@ -2373,11 +2598,13 @@ A WPF application can use the Generic Host to configure DI, logging, and configu
 // App.xaml.cs (illustrative WPF example)
 public partial class App : Application
 {
-    public IHost Host { get; }
+    // Named AppHost, not Host: a property called Host would hide the static
+    // Host class and make Host.CreateDefaultBuilder() fail to compile.
+    public IHost AppHost { get; }
 
     public App()
     {
-        Host = Host.CreateDefaultBuilder()
+        AppHost = Host.CreateDefaultBuilder()
             .ConfigureServices((context, services) =>
             {
                 services.AddSingleton<MainWindow>();
@@ -2391,9 +2618,9 @@ public partial class App : Application
 
     protected override async void OnStartup(StartupEventArgs e)
     {
-        await Host.StartAsync();
+        await AppHost.StartAsync();
 
-        var mainWindow = Host.Services.GetRequiredService<MainWindow>();
+        var mainWindow = AppHost.Services.GetRequiredService<MainWindow>();
         mainWindow.Show();
 
         base.OnStartup(e);
@@ -2401,8 +2628,8 @@ public partial class App : Application
 
     protected override async void OnExit(ExitEventArgs e)
     {
-        await Host.StopAsync();
-        Host.Dispose();
+        await AppHost.StopAsync();
+        AppHost.Dispose();
 
         base.OnExit(e);
     }
@@ -2554,7 +2781,7 @@ layer.
 
 - **Do not inject scoped services into singletons.** Use a scoped consumer or create a scope for each unit of work.
 - **Do not keep a scoped `DbContext` for the whole desktop-app lifetime.** A context is designed for a short unit of work and is not thread-safe.
-- **Do not call `BuildServiceProvider()` during service registration.** Let the host build the provider once.
+- **Do not call `BuildServiceProvider()` during service registration.** Let the host build the provider once. Each call creates a *second* container, so a singleton resolved from it is a different instance from the one the app later uses, and its disposables are never cleaned up by the host.
 - **Do not use `IServiceProvider` everywhere.** Prefer constructor injection; use factories or scopes at explicit boundaries.
 - **Do not assume transient means “per method call.”** A transient captured by a singleton lives as long as that singleton holds it.
 - **Do not forget scope disposal.** Prefer `using` / `await using` for operation scopes.
@@ -2563,9 +2790,35 @@ layer.
 - **Do not use `Lazy<T>` as a default fix for circular dependencies.** Refactor the dependency graph.
 - **Do validate at startup.** Scope and dependency validation can expose problems earlier.
 - **Be intentional about duplicate registrations.** For a single service type the last registration wins; `IEnumerable<T>` returns all of them in registration order.
+
+  ```csharp
+  services.AddScoped<INotifier, EmailNotifier>();
+  services.AddScoped<INotifier, SmsNotifier>();
+  // GetRequiredService<INotifier>()          -> SmsNotifier (last wins)
+  // GetServices<INotifier>() / IEnumerable   -> [EmailNotifier, SmsNotifier]
+  ```
 - **Don't register the same implementation twice with different lifetimes** if you expect one shared instance — separate registrations create separate instances.
+
+  ```csharp
+  // BAD: asking for ICache and for MemoryCache gives two different objects
+  services.AddSingleton<ICache, MemoryCache>();
+  services.AddSingleton<MemoryCache>();
+
+  // GOOD: one registration, the interface forwards to it
+  services.AddSingleton<MemoryCache>();
+  services.AddSingleton<ICache>(sp => sp.GetRequiredService<MemoryCache>());
+  ```
 - **Don't add an interface for every class.** Add abstractions where they create a useful boundary or enable substitution.
 - **Don't run parallel operations on one `DbContext`.** Use separate scopes/contexts for concurrent work.
+
+  ```csharp
+  // BAD: both queries share one context at the same time -> InvalidOperationException
+  await Task.WhenAll(db.Orders.ToListAsync(), db.Customers.ToListAsync());
+
+  // GOOD: await one after the other, or give each task its own scope/context
+  var orders = await db.Orders.ToListAsync();
+  var customers = await db.Customers.ToListAsync();
+  ```
 - **Too many constructor parameters** usually means the class has too many responsibilities.
 
 #### Testing DI and application behavior
@@ -2785,14 +3038,14 @@ Requests may wait at multiple layers: network/load balancer, HTTP.sys/IIS, the a
 
 If incoming traffic exceeds the system's sustainable processing rate, queues grow. Longer queues increase latency and can lead to timeouts, retries, and even more load.
 
-A robust design uses **backpressure** rather than accepting unlimited work:
+Example: the database handles 200 queries/second but 400 requests/second arrive. The extra 200 queue every second, so after a minute requests wait 60 s and clients time out and retry. **Backpressure** means pushing back on callers (reject or slow them early) instead of letting that queue grow without limit. A robust design uses it rather than accepting unlimited work:
 
 - Set appropriate request-body and request-time limits.
 - Use rate limiting and concurrency limits where appropriate.
 - Bound queues; reject or defer work when capacity is exhausted.
 - Return meaningful `429 Too Many Requests` or `503 Service Unavailable` responses when appropriate.
 - Use timeouts and cancellation tokens for downstream calls.
-- Avoid retry storms; use bounded retries with exponential backoff and jitter.
+- Avoid retry storms; use bounded retries with exponential backoff and jitter. (Retry storm: a slow service makes every caller retry at once, which multiplies the load and keeps it down. Backoff means waiting longer after each failure, e.g. 1 s, 2 s, 4 s; jitter adds a random delay so callers do not all retry at the same instant.)
 - Move long-running work to a durable queue and process it in background workers.
 
 The IIS application-pool queue length is not a magic throughput setting. Increasing it may allow more requests to wait, but does not increase the app's actual processing capacity. Tune it based on measurements and the desired overload behavior.
@@ -2831,6 +3084,7 @@ Recycling replaces a worker process according to configured rules, such as sched
 - A warm-up/preload strategy can reduce cold-start latency, but must be configured and tested.
 
 For reliability:
+
 - Keep application state external where possible (database or distributed cache).
 - Make startup safe and fast.
 - Use readiness/health checks at the load-balancer or orchestrator layer.
@@ -2860,7 +3114,7 @@ These are averages. Real systems have peaks, uneven traffic, and expensive versu
 
 ##### A senior-level approach
 
-1. **Define SLOs:** target throughput, p95/p99 latency, availability, and error rate.
+1. **Define SLOs (service-level objectives, the measurable targets you promise, such as "99% of requests under 300 ms"):** target throughput, p95/p99 latency, availability, and error rate.
 2. **Load-test realistically:** use production-like data and measure at expected peaks and beyond.
 3. **Find the bottleneck:** CPU, allocation/GC, locks, thread-pool starvation, SQL, Redis, network, or external APIs.
 4. **Optimize the endpoint:** avoid unnecessary work, reduce payloads, paginate, use async I/O, and remove blocking calls.
@@ -2889,6 +3143,7 @@ If 20 app instances each can open 100 SQL connections, the database may face up 
 #### 11. Performance and configuration: measure before tuning
 
 Potentially useful controls include:
+
 - IIS application-pool queue and recycling settings.
 - Always-running/preload options where supported and appropriate.
 - ASP.NET Core request limits, rate limiting, and timeouts.
@@ -2910,7 +3165,19 @@ Do not blindly copy settings such as “maximum requests per CPU,” increase qu
 | SQL timeouts | Slow queries, blocking/deadlocks, overloaded DB, pool exhaustion |
 | Failures after recycle | Cold-start issues, process-local state, startup dependencies, shutdown handling |
 
-Use IIS logs and Windows performance counters/Event Viewer alongside ASP.NET Core metrics, distributed tracing, and Application Insights or another APM tool.
+Use IIS logs and Windows performance counters/Event Viewer alongside ASP.NET Core metrics, distributed tracing, and Application Insights or another APM (application performance monitoring) tool.
+
+##### Thread-pool starvation explained
+
+The .NET ThreadPool starts with a small number of threads and adds more slowly (roughly one or two per second) when all are busy. If many requests each block a thread, new requests wait for a free thread even though the CPU is nearly idle. That is why "high latency, low CPU" appears in the table above.
+
+```csharp
+// BAD: 200 concurrent requests block 200 pool threads waiting on the database
+public IActionResult Get(int id) => Ok(_repo.GetAsync(id).Result);
+
+// GOOD: the thread goes back to the pool while the database works
+public async Task<IActionResult> Get(int id) => Ok(await _repo.GetAsync(id));
+```
 
 #### 13. Senior interview questions and answer outlines
 
@@ -3014,7 +3281,10 @@ namespace SignalRNotifications.Hubs;
 
 public sealed class NotificationHub : Hub
 {
-    // A client can join a group after the server authorizes the request.
+    // Demo only: any client can call this and join ANY group name, because
+    // the method performs no check. In production, verify the caller is
+    // allowed to join groupName before adding (see section 8).
+    // Clients invoke it by name: connection.invoke("JoinGroup", "sales")
     public async Task JoinGroup(string groupName)
     {
         await Groups.AddToGroupAsync(Context.ConnectionId, groupName);
@@ -3027,7 +3297,9 @@ public sealed class NotificationHub : Hub
 }
 ```
 
-A **Hub** is SignalR's high-level API for handling client-server communication. Do not let clients join arbitrary sensitive groups without server-side authorization. In a production application, derive group membership from authenticated identity and trusted database data rather than accepting a client-supplied role or group name.
+A **Hub** is SignalR's high-level API for handling client-server communication. A **group** is a named set of connections you can message together. Do not let clients join arbitrary sensitive groups without server-side authorization. In a production application, derive group membership from authenticated identity and trusted database data rather than accepting a client-supplied role or group name.
+
+Why it matters: with the demo above, a regular user can call `JoinGroup("role:admin")` from the browser console and then receive every message meant for admins.
 
 #### 5. Register SignalR and map the hub
 
@@ -3082,6 +3354,8 @@ public sealed class NotificationsController : ControllerBase
         _hub = hub;
     }
 
+    // Demo: no authorization. In production add [Authorize(Policy = "...")]
+    // to these actions, or anyone could broadcast to everyone.
     [HttpPost("all")]
     public async Task<IActionResult> NotifyAll(
         [FromBody] NotificationRequest request)
@@ -3136,7 +3410,32 @@ These calls do not guarantee delivery to disconnected users. Persist important n
 
 By default, SignalR uses the authenticated user's `ClaimTypes.NameIdentifier` claim as the user identifier. Ensure it matches the ID used by your application.
 
-For JWT authentication, configure authentication and authorization in the normal ASP.NET Core pipeline and provide the access token when establishing the SignalR connection. Browser WebSocket/SSE connections may send the token in the `access_token` query parameter; restrict token extraction to the hub path, use HTTPS, and avoid logging tokens.
+For JWT authentication, configure authentication and authorization in the normal ASP.NET Core pipeline and provide the access token when establishing the SignalR connection. Browser WebSocket/SSE connections cannot set an `Authorization` header, so the client sends the token in the `access_token` query parameter and the server copies it into the context. Restrict that extraction to the hub path, use HTTPS, and avoid logging URLs (they now contain the token).
+
+```csharp
+// Assumes AddAuthentication().AddJwtBearer(...) is already configured.
+builder.Services.Configure<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme, o =>
+{
+    o.Events = new JwtBearerEvents
+    {
+        OnMessageReceived = ctx =>
+        {
+            var token = ctx.Request.Query["access_token"];
+            if (!string.IsNullOrEmpty(token) &&
+                ctx.HttpContext.Request.Path.StartsWithSegments("/hubs/notifications"))
+            {
+                ctx.Token = token;   // only for hub requests, never for other paths
+            }
+            return Task.CompletedTask;
+        }
+    };
+});
+```
+
+```javascript
+// Client side: supplies the token (shown as ?access_token=... for WebSockets)
+.withUrl(url, { accessTokenFactory: () => myJwt })
+```
 
 Do **not** maintain your own static `Dictionary<userId, connectionId>` for normal targeting. One user may have multiple browser tabs/devices, connections can reconnect, and static state does not work reliably across multiple servers. Prefer `Clients.User(userId)` with authenticated identity.
 
@@ -3150,9 +3449,12 @@ Illustrative hub pattern (adapt the database query to your application's entitie
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.EntityFrameworkCore;   // for ToListAsync
 
 namespace SignalRNotifications.Hubs;
 
+// Assumes ApplicationDbContext is registered with AddDbContext (scoped);
+// a new Hub instance is created per call, so injecting it is safe.
 [Authorize]
 public sealed class NotificationHub : Hub
 {
@@ -3255,7 +3557,7 @@ Use a valid JWT or other configured authentication if the endpoint requires it.
 - One user can have several simultaneous connections.
 - SignalR group membership is connection-based and must be re-established when a connection reconnects.
 - `OnConnectedAsync()` and `OnDisconnectedAsync()` are lifecycle hooks; avoid relying on in-memory connection tracking in a multi-server deployment.
-- For scale-out, consider Azure SignalR Service or a supported Redis backplane, depending on the hosting environment.
+- For scale-out, consider Azure SignalR Service or a supported Redis backplane, depending on the hosting environment. (Why: with two servers, a message sent from server 1 only reaches clients connected to server 1. A backplane relays each message to all servers so every connected client gets it.)
 - SignalR is not a durable message queue. Store notifications that must survive disconnects and let clients retrieve unread notifications from a REST endpoint.
 
 #### 11. Viva questions and short answers
@@ -3294,7 +3596,7 @@ Each tab usually has its own connection. `Clients.User(userId)` targets all acti
 Use a scale-out option such as Azure SignalR Service or a Redis backplane where appropriate, and avoid relying on static in-memory connection maps.
 
 ##### Q12. How would you implement a production notification flow?
-Authenticate and authorize the request, perform and persist the business operation, commit the transaction, then publish a SignalR event. For reliable delivery, use persisted notifications and consider an outbox/background-worker pattern.
+Authenticate and authorize the request, perform and persist the business operation, commit the transaction, then publish a SignalR event. For reliable delivery, use persisted notifications and consider an outbox/background-worker pattern (save the notification row in the same database transaction as the business change, then a background worker reads unsent rows and pushes them via SignalR, so a crash between "saved" and "sent" cannot lose the notification).
 
 #### 12. Suggested viva demo sequence
 

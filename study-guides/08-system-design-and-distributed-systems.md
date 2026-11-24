@@ -25,8 +25,8 @@ Each concept is explained once. Where several notes covered the same topic, they
 Define targets before selecting technologies:
 
 - **Traffic:** average and peak requests per second (RPS), burst duration, and concurrent connections.
-- **Latency:** p50, p95, and p99 targets per endpoint.
-- **Availability:** service-level objective (SLO), recovery time objective (RTO), and recovery point objective (RPO).
+- **Latency:** p50, p95, and p99 targets per endpoint (the time under which 50%, 95%, and 99% of requests finish; p99 = 200 ms means 1 request in 100 is slower than 200 ms).
+- **Availability:** service-level objective (SLO, the target, e.g. "99.9% of requests succeed per month"), recovery time objective (RTO, how long an outage may last), and recovery point objective (RPO, how much recent data you may lose, e.g. "at most 5 minutes").
 - **Workload:** read/write ratio, payload sizes, CPU-heavy operations, database calls, and external dependencies.
 - **Consistency:** which operations require immediate consistency and which can be eventually consistent.
 - **Security and compliance:** identity, authorization, audit, data residency, and retention requirements.
@@ -78,6 +78,18 @@ Keep the request pipeline short and predictable. Apply routing, authentication, 
 
 Avoid `.Result`, `.Wait()`, synchronous database/network calls, unbounded parallel work, and fire-and-forget tasks inside request handlers. Use bounded background queues or a durable broker for work that must outlive the request.
 
+**Why blocking hurts (ThreadPool starvation):** the ThreadPool is a limited set of worker threads shared by all requests. A thread blocked on `.Result` sits idle while holding its slot, so under load every thread ends up waiting and new requests queue even though CPU is near 0%.
+
+```csharp
+// Bad: the thread is parked for the whole 200 ms DB call. 100 concurrent requests = 100 blocked threads.
+var user = _repo.GetUserAsync(id).Result;
+
+// Good: the thread is released at 'await' and reused by other requests while the DB works.
+var user = await _repo.GetUserAsync(id);
+```
+
+Fire-and-forget (`_ = DoWorkAsync();`) is dangerous because the work is not tied to the request: exceptions go unobserved and the work is silently lost if the process restarts. Queue it instead.
+
 #### 4. Application design
 
 ##### Suggested layering
@@ -93,7 +105,7 @@ Keep controllers/endpoints thin, but avoid creating abstractions that add no val
 
 - Use **EF Core** for maintainable transactional application code; use projections and `AsNoTracking()` for read-only queries where appropriate.
 - Consider **Dapper or SQL** for measured hot paths where it offers a meaningful benefit.
-- Inspect generated SQL and execution plans. Fix N+1 queries, missing/ineffective indexes, excessive round trips, large result sets, and unnecessary materialization.
+- Inspect generated SQL and execution plans. Fix N+1 queries (1 query for 100 orders, then 100 more queries, one per order, to load each customer; use `Include` or a join to make it 1-2 queries), missing/ineffective indexes (the database scans every row instead of seeking), excessive round trips, large result sets, and unnecessary materialization (loading rows into memory with `ToList()` before filtering).
 - Paginate large collections. Prefer keyset pagination for deep, frequently accessed pages when the ordering supports it.
 - Use optimistic concurrency or appropriate database locking for conflicting updates.
 - Do not run multiple parallel operations on one EF Core `DbContext`; it is not thread-safe.
@@ -122,7 +134,15 @@ Use caching for data that is read often and can tolerate a defined staleness win
 - **In-process cache:** very hot, instance-local data; each replica has its own copy.
 - **Redis/distributed cache:** shared cache across replicas, distributed counters, or other explicitly designed shared state.
 
-Choose cache keys, TTLs, invalidation rules, and ownership carefully. Protect against cache stampedes with request coalescing, jittered TTLs, or controlled refresh. Do not cache authorization-sensitive data under keys that omit tenant/user context. A cache is not the source of truth unless the design explicitly makes it so.
+Choose cache keys, TTLs (time-to-live: how long an entry is kept), invalidation rules, and ownership carefully. A cache is not the source of truth unless the design explicitly makes it so.
+
+**Cache stampede:** a popular entry expires and many requests miss at the same instant, so all of them hit the database to rebuild the same value. Example: a key read 1,000 times/s expires; for the 200 ms rebuild, about 200 requests run the same expensive query at once and can overload the DB. Fixes:
+
+- **Request coalescing:** only the first miss rebuilds; the others wait for that one result.
+- **Jittered TTLs:** add a random offset (e.g. 10 min plus or minus 1 min) so thousands of keys written together do not all expire together.
+- **Controlled refresh:** refresh the entry shortly before expiry, or serve the stale value while one background task refreshes it.
+
+**Key scoping:** a key must include everything that changes the answer. Bad: `cache["orders"]` returns user A's orders to user B. Good: `cache["tenant:7:user:42:orders"]`. Never cache authorization-sensitive data under keys that omit tenant/user context.
 
 #### 7. Background work and messaging
 
@@ -138,11 +158,11 @@ Move slow, retryable, or non-interactive work—report generation, email, docume
 #### 8. Resilience and overload protection
 
 - **Timeouts:** define a total request budget and shorter downstream budgets; avoid requests waiting indefinitely.
-- **Retries:** retry only transient failures and safe/idempotent operations. Use bounded exponential backoff with jitter; retries can amplify an outage.
-- **Circuit breakers:** stop repeatedly calling an unhealthy dependency.
-- **Bulkheads:** cap concurrent work per downstream dependency so one slow system cannot consume all capacity.
-- **Rate limiting:** apply per-client/tenant/user limits where appropriate, with explicit `429` behavior.
-- **Backpressure:** reject or defer work when queues, DB capacity, or worker capacity are saturated.
+- **Retries:** retry only transient failures (timeouts, 503) and safe/idempotent operations (retrying "charge card" without an idempotency key can charge twice). Use bounded exponential backoff with jitter (waits of about 1 s, 2 s, 4 s, each plus a random offset); retries can amplify an outage: if 1,000 clients each retry 3 times against an already struggling service, it receives up to 4,000 requests instead of 1,000.
+- **Circuit breakers:** after N consecutive failures the breaker "opens" and calls fail immediately for a cool-down period instead of waiting on timeouts; it then lets a trial call through to see if the dependency recovered. This protects both the caller's threads and the sick dependency.
+- **Bulkheads:** cap concurrent work per downstream dependency so one slow system cannot consume all capacity. Example: allow at most 20 concurrent calls to the slow reporting service, so the other 80 threads still serve checkout.
+- **Rate limiting:** apply per-client/tenant/user limits where appropriate, with explicit `429 Too Many Requests` behavior (plus a `Retry-After` header) so one noisy client cannot starve the rest.
+- **Backpressure:** reject or defer work when queues, DB capacity, or worker capacity are saturated. Bad: accept everything into an unbounded queue, so latency grows until memory runs out. Good: when the queue holds more than N items, return `503`/`429` quickly so callers slow down.
 - **Cancellation:** propagate `HttpContext.RequestAborted` where appropriate and ensure downstream work respects cancellation.
 - **Idempotency keys:** support safe retries for operations such as payments or order creation where duplicate submissions are harmful.
 
@@ -198,7 +218,7 @@ Test steady load, bursts, soak duration, cold start, failover, and dependency de
 - Configure autoscaling using relevant signals such as CPU, request concurrency, and queue depth; scale-out cannot instantly solve a saturated database.
 - Use blue/green or canary releases, feature flags, rollback plans, and backward-compatible database migrations.
 - Use infrastructure as code (Bicep/Terraform) and immutable, scanned container images.
-- For multi-region designs, explicitly define routing, data replication, write ownership, failover, RTO/RPO, and how split-brain or regional recovery is handled. Multi-region active-active writes are not a default requirement.
+- For multi-region designs, explicitly define routing, data replication, write ownership, failover, RTO/RPO, and how split-brain (a network partition leaves two regions each believing they are the primary and both accepting writes, so the data diverges and is hard to merge) or regional recovery is handled. Multi-region active-active writes are not a default requirement.
 
 #### 13. Common symptoms and diagnostic order
 
@@ -209,10 +229,10 @@ Test steady load, bursts, soak duration, cold start, failover, and dependency de
 | Growing request latency under load | ThreadPool starvation, queueing, dependency saturation | ThreadPool counters, blocking calls, active requests, downstream saturation |
 | SQL timeouts | Slow queries, blocking, exhausted pool, DB capacity | Query plans, waits, pool metrics, DB CPU/I/O |
 | Memory climbs over time | Retained references, unbounded cache/queues, large objects | Heap dump, GC counters, cache and queue bounds |
-| Retry storm | Aggressive retries and cascading failure | Retry counts, timeout budgets, circuit breakers |
+| Retry storm (failing calls are retried so often that the retries themselves keep the dependency down) | Aggressive retries and cascading failure | Retry counts, timeout budgets, circuit breakers |
 | Queue age grows | Consumers too slow, downstream bottleneck, insufficient bounded capacity | Consumer throughput, oldest-message age, dead-letter rate |
 
-Diagnose with telemetry and profiling before changing thread counts, queue lengths, pool sizes, or server limits. Raising a limit can move the queue downstream and make the outage worse.
+Diagnose with telemetry and profiling before changing thread counts, queue lengths, pool sizes, or server limits. Raising a limit can move the queue downstream and make the outage worse. Example: doubling API threads from 100 to 200 when the DB only handles 50 queries at once just puts 200 requests in the DB's queue, and every request gets slower.
 
 #### 14. Practical reference stack on Azure
 
@@ -303,6 +323,8 @@ flowchart LR
 - Event dependencies and failure paths can become difficult to track.
 - Requires reliable messaging, idempotent handlers, and good tracing.
 
+Why "harder to follow" matters: to answer "why is order 42 stuck?", you must inspect the logs of Order, Payment, Inventory and Shipping to find which event was not published or consumed; no single place shows the whole flow. Adding a step (say, a fraud check between payment and inventory) means changing what event Inventory listens to, so several services change for one workflow change.
+
 ##### Orchestration: a coordinator directs the workflow
 
 A dedicated **saga orchestrator** tracks the workflow and tells each service which action to perform. Services execute their local transactions and return results; the orchestrator decides the next step.
@@ -353,13 +375,13 @@ Neither approach automatically guarantees consistency, scalability, or fault tol
 Whichever style you choose:
 
 - **Persist progress:** store saga state so a process restart does not lose the workflow.
-- **Make handlers idempotent:** processing the same command or event twice should not duplicate a charge, reservation, or other business effect.
-- **Use reliable message publishing:** consider the **Transactional Outbox** pattern to avoid committing database changes while losing the corresponding event.
+- **Make handlers idempotent:** processing the same command or event twice should not duplicate a charge, reservation, or other business effect. Bad: `ChargeCustomer(orderId)` charges again on each redelivery. Good: record the processed message/order ID first (or use a unique constraint); if it is already recorded, skip the charge and just re-send the success reply.
+- **Use reliable message publishing:** consider the **Transactional Outbox** pattern to avoid committing database changes while losing the corresponding event. The problem: saving the order to the DB and publishing `OrderCreated` to the broker are two separate systems, so a crash between them leaves an order that nobody hears about (or an event for an order that was rolled back). The fix: write the event into an `Outbox` table in the same DB transaction as the order, and let a separate publisher read that table and send to the broker (retrying until it succeeds).
 - **Handle retries and timeouts:** retry transient failures with limits and backoff; distinguish transient failures from business failures.
-- **Define compensations:** document what happens after each step fails and what to do if compensation itself fails.
+- **Define compensations:** document what happens after each step fails and what to do if compensation itself fails (for example, a refund call times out: retry with backoff, then raise an alert or manual-review task rather than silently leaving the customer charged).
 - **Expect at-least-once delivery:** duplicates and delayed messages are normal possibilities in distributed messaging.
 - **Observe the workflow:** include a correlation/saga ID in logs and traces, and expose statuses such as `Pending`, `Completed`, `Compensating`, and `Failed`.
-- **Design for eventual consistency:** other services may temporarily observe intermediate states while the saga is running.
+- **Design for eventual consistency:** other services may temporarily observe intermediate states while the saga is running (for example, an order shows as "Pending" with payment taken but stock not yet reserved). Show such states explicitly instead of pretending the order is complete.
 
 #### 5. Implementing sagas in .NET
 
@@ -534,7 +556,7 @@ Each service has a **separate queue**. If Inventory Service has three replicas c
 - Consumer acknowledgements allow RabbitMQ to know when a delivery has been processed; unacknowledged messages can be redelivered after a failure.
 - Publisher confirms help the producer determine whether RabbitMQ accepted a publish. They are different from consumer acknowledgements.
 - Redelivery can create duplicates. Design consumers to be **idempotent**.
-- Configure bounded retries and a dead-letter strategy for messages that repeatedly fail. Avoid infinite requeue loops.
+- Configure bounded retries and a dead-letter strategy (a dead-letter queue is a side queue where messages that keep failing are parked for inspection) for messages that repeatedly fail. Avoid infinite requeue loops: a malformed "poison" message that always throws, if requeued immediately each time, is redelivered forever and blocks or starves the queue.
 - If no queue is bound when a message is published, ordinary exchange routing does not create a historical copy for a future subscriber. Plan the queue topology before relying on delivery.
 
 #### 5. Publish–subscribe in Apache Kafka
@@ -560,7 +582,7 @@ Each group can read the same records independently. Within a consumer group, par
 
 - Kafka normally retains records for a configured time or size policy, regardless of whether a consumer has read them.
 - An offset records a consumer group's position. A consumer can often reset an offset and reprocess retained records.
-- Offset commit timing matters: committing before business processing finishes can lose work; committing afterwards can result in a record being processed again after a crash.
+- Offset commit timing matters (the committed offset is what the group resumes from after a restart). Commit before processing: if the consumer crashes mid-way, the record is already marked done and is **lost** (at-most-once). Commit after processing: if it crashes after the work but before the commit, the record is read **again** (at-least-once, duplicates), which is why idempotent handlers are the usual choice.
 - Duplicates are possible, so idempotent processing is still important.
 - Kafka supports strong processing guarantees for certain Kafka-to-Kafka workflows, but a database update or external API call is not automatically part of a Kafka transaction.
 
@@ -773,7 +795,7 @@ Worker(s) -> idempotent processing -> database/result store
 Client polls job status or receives a notification
 ```
 
-Design for at-least-once delivery: messages may be redelivered. Use idempotency keys, database unique constraints, bounded retries with exponential backoff and jitter, dead-letter queues, timeouts, and observability. Do not claim exactly-once execution unless the full end-to-end guarantees genuinely support it.
+Design for at-least-once delivery (the broker guarantees a message is delivered one or more times, never zero, so duplicates are possible: if a worker finishes the job but crashes before acknowledging, the broker redelivers it). Use idempotency keys, database unique constraints, bounded retries with exponential backoff and jitter, dead-letter queues, timeouts, and observability. Do not claim exactly-once execution unless the full end-to-end guarantees genuinely support it.
 
 ### Distributed locks and alternatives
 
@@ -781,9 +803,9 @@ Design for at-least-once delivery: messages may be redelivered. Use idempotency 
 
 For cross-server coordination, consider:
 
-- **Database claim/lease:** atomically claim a job row using a conditional update or transactional locking; use lease expiry and recovery.
+- **Database claim/lease:** atomically claim a job row using a conditional update or transactional locking; use lease expiry and recovery. Example (T-SQL): `UPDATE Jobs SET LockedBy=@worker, LockedUntil=DATEADD(minute,5,SYSUTCDATETIME()) WHERE Id=@id AND (LockedUntil IS NULL OR LockedUntil < SYSUTCDATETIME())`; if 1 row was affected, this worker owns the job, otherwise another worker does. If the worker dies, the lease expires after 5 minutes and someone else can reclaim it.
 - **Message queue:** competing consumers, acknowledgments, retries, and dead-lettering often avoid the need for a separate lock.
-- **Distributed lease/lock:** use a well-understood implementation with expiry, ownership-checked release, and fencing tokens where stale owners could corrupt data.
+- **Distributed lease/lock:** use a well-understood implementation with expiry, ownership-checked release (only the owner may release, so worker A cannot free a lock that has since passed to worker B), and fencing tokens where stale owners could corrupt data. A fencing token is a number that increases each time the lock is granted; the storage rejects writes carrying an older token. Scenario: A pauses (long GC) and its lock expires; B gets token 34 and writes; A wakes up and writes with token 33, and the store rejects it.
 
 A lock alone does not make a job durable or guarantee exactly-once effects. Use idempotency and transactional boundaries.
 
@@ -820,11 +842,13 @@ SQL Server implements this with partition functions and schemes; PostgreSQL with
 
 **Cross-engine gotchas**
 
-1. A unique constraint generally **must include the partition key**; global uniqueness needs a lookup table or collision-free IDs.
-2. There is usually no true global index — each partition has local indexes.
-3. A query that does not filter on the partition key **cannot prune** and may be worse than no partitioning.
-4. Changing a row's partition key is physically a delete + insert.
-5. Too many partitions add planning/metadata overhead; tens to low hundreds is the sweet spot, thousands is a warning sign.
+Assumes an `Orders` table partitioned by month of `created_at`.
+
+1. A unique constraint generally **must include the partition key**, because each partition can only check uniqueness inside itself. `UNIQUE(order_no)` is rejected; `UNIQUE(order_no, created_at)` works but then does not stop the same `order_no` appearing in two months. Global uniqueness needs a lookup table or collision-free IDs (GUID/ULID/snowflake).
+2. There is usually no true global index — each partition has local indexes (one index per partition), so a lookup by `order_no` alone probes the index of every partition.
+3. A query that does not filter on the partition key **cannot prune** and may be worse than no partitioning. `WHERE created_at >= '2025-03-01' AND created_at < '2025-04-01'` reads 1 partition; `WHERE customer_id = 7` reads all 36 partitions (3 years).
+4. Changing a row's partition key is physically a delete + insert (the row must move to another partition), so updating `created_at` across a month boundary is far more expensive than a normal update.
+5. Too many partitions add planning/metadata overhead (the planner must consider each one); tens to low hundreds is the sweet spot, thousands is a warning sign.
 
 **Migrating a live giant table into partitions** — expand → dual-write → backfill → cutover → contract:
 
@@ -857,7 +881,7 @@ They compose: a well-designed shard is often a partitioned dataset internally (f
 
 | Strategy | How | Pros | Cons |
 |---|---|---|---|
-| **Range** | Key ranges per shard | Simple; range scans stay in a shard | Hotspots (all new writes hit the newest shard) |
+| **Range** | Key ranges per shard | Simple; range scans stay in a shard | Hotspots (with an increasing key such as `OrderId` or timestamp, all new writes land on the newest shard while older shards sit idle) |
 | **Hash** | `hash(key) mod N` | Even distribution | Range scans fan out; changing `N` moves almost all data |
 | **Consistent hashing** | Hash ring with virtual nodes | Adding/removing a node moves ~1/N of data | More complex to operate |
 | **Directory / lookup** | Explicit `key → shard` map | Flexible; can move specific hot keys | The directory becomes a critical, highly available dependency |
@@ -868,9 +892,9 @@ Naive `mod N`: going from 4 to 5 shards remaps almost every key (≈ 4/5 of the 
 
 **Canonical multi-tenant SaaS answer:** shard by `tenant_id`. Per-tenant reads, writes, joins, and transactions stay on one shard; only cross-tenant analytics fans out.
 
-**Cross-shard queries (scatter-gather).** A query that cannot route by its key is broadcast to all shards and merged by a coordinator. Latency is bounded by the *slowest* shard, so tail latency worsens as shard count grows, and cross-shard joins require co-location or shipping data — which is why small reference data is often duplicated on every shard.
+**Cross-shard queries (scatter-gather).** A query that cannot route by its key is broadcast to all shards and merged by a coordinator. Latency is bounded by the *slowest* shard, so tail latency worsens as shard count grows (if each shard is slow 1% of the time, a query touching 100 shards is slow about 63% of the time: 1 - 0.99^100), and cross-shard joins require co-location or shipping data — which is why small reference data is often duplicated on every shard.
 
-**Hot shard / celebrity problem.** If one key or tenant carries most of the traffic, adding shards does not help under pure key routing. Mitigations: write-shard the hot key across several physical partitions with a synthetic suffix, cache that key aggressively, move it to dedicated capacity (directory-based maps only), or rate-limit/isolate the noisy key.
+**Hot shard / celebrity problem.** If one key or tenant carries most of the traffic, adding shards does not help under pure key routing. Example: with 10 shards and one tenant producing 60% of traffic, that tenant's shard is saturated while the other 9 are mostly idle, and an 11th shard still cannot split one tenant's key. Mitigations: write-shard the hot key across several physical partitions with a synthetic suffix (write to `tenant42#0` ... `tenant42#7` chosen at random, and read by querying all 8 and merging), cache that key aggressively, move it to dedicated capacity (directory-based maps only), or rate-limit/isolate the noisy key.
 
 ### Distributed transactions: coordination patterns
 
@@ -878,7 +902,7 @@ A transaction spanning two shards — or two microservices that each own a priva
 
 **Two-phase commit (2PC).** Phase 1: the coordinator sends `PREPARE`; each participant does all work needed to guarantee it *can* commit (log, locks) and votes. Phase 2: if all voted yes, `COMMIT`; otherwise `ABORT`. Why it is rarely the answer across microservices:
 
-- **Blocking:** participants hold locks from `PREPARE` until they hear back; if the coordinator dies they are *in-doubt*.
+- **Blocking:** participants hold locks from `PREPARE` until they hear back; if the coordinator dies they are *in-doubt* (they voted yes, so they may not unilaterally commit or abort, and the locked rows stay unavailable to everyone else until the coordinator recovers).
 - The coordinator is a single point of failure and a throughput bottleneck.
 - Needs every participant to speak the same protocol (XA/MSDTC) — impossible across a SQL database, a message queue, and a third-party HTTP API.
 - Synchronous; holds resources for as long as the slowest participant.
@@ -925,6 +949,8 @@ N = replicas of each item     W = replicas that must ack a write     R = replica
 R + W > N  → read and write sets overlap → strongly consistent reads (higher latency)
 R + W ≤ N  → reads can miss recent writes → eventual consistency (lower latency, more available)
 ```
+
+Example with N=3: `W=2, R=2` gives R+W=4>3, so any 2 replicas read must include at least one of the 2 that acknowledged the write, and the newest version is seen. `W=1, R=1` gives 2≤3, so a read may hit the one replica that has not yet received the write and return stale data.
 
 `W=1, R=1` favors availability and latency; `W=N` or `R+W>N` favors consistency at the cost of availability during partial failures. This is the CAP trade-off made tunable (Cassandra `ONE`/`QUORUM`/`ALL`; DynamoDB eventual vs strong reads).
 
@@ -1003,10 +1029,10 @@ R + W ≤ N  → reads can miss recent writes → eventual consistency (lower la
 **Answer:** Profile representative workloads first, then address the measured bottleneck: reduce allocations and serialization overhead, use async I/O, optimize database calls and payloads, cache with correct invalidation, and scale appropriately. Load-test and monitor p95/p99 latency, error rate, and resource usage after changes.
 
 ###### 10. How do you do bulk insert/update in .NET Core? (PDF p. 15)
-**Answer:** Use provider-native bulk APIs or a bulk library, TVPs/set-based SQL, or batched operations rather than one round trip per entity. Validate in bounded batches, use transactions suited to recovery needs, and verify provider behavior and constraints.
+**Answer:** Use provider-native bulk APIs (e.g. `SqlBulkCopy`) or a bulk library, TVPs (table-valued parameters: pass a whole table of rows as one SQL parameter)/set-based SQL, or batched operations rather than one round trip per entity. Validate in bounded batches, use transactions suited to recovery needs, and verify provider behavior and constraints.
 
 ###### 11. How do you limit API hits in .NET Core? (PDF p. 15)
-**Answer:** Configure ASP.NET Core rate-limiting middleware with a policy (for example, token bucket or fixed/sliding window) keyed by authenticated user/tenant or client identity, plus global safeguards. Return `429` and retry information; for multiple instances, use a gateway or distributed coordination when a global limit is required.
+**Answer:** Configure ASP.NET Core rate-limiting middleware with a policy (for example, token bucket: a bucket refills at a steady rate and each request takes a token, which allows short bursts; or fixed/sliding window: at most N requests per time window) keyed by authenticated user/tenant or client identity, plus global safeguards. Return `429` and retry information; for multiple instances, use a gateway or distributed coordination when a global limit is required.
 
 ###### 12. How do you handle huge payloads that expire in 30 seconds? (PDF p. 15)
 **Answer:** The prompt does not clarify whether “expire” refers to an HTTP timeout, a token/upload URL, or a deadline. In general, avoid sending huge payloads synchronously under a 30-second limit: stream/chunk data to object storage, use a short-lived scoped upload URL if that is what expires, and enqueue asynchronous processing with a status endpoint. Set realistic server/proxy timeouts and define retry/resume behavior.
@@ -1015,7 +1041,7 @@ R + W ≤ N  → reads can miss recent writes → eventual consistency (lower la
 **Answer:** Put set-oriented filtering, joins, aggregation, and paging close to the data source, using translatable LINQ or well-designed SQL; keep domain/business rules in the application/domain layer when they need testability and reuse. Inspect generated SQL and choose based on maintainability and measured execution behavior, not a blanket preference.
 
 ###### 14. How do you optimize a stored procedure? (PDF p. 15)
-**Answer:** Capture the actual execution plan and runtime metrics, then address scans, poor cardinality estimates, missing/incorrect indexes, excessive reads, implicit conversions, and parameter-sensitive plans. Keep transactions efficient, avoid unnecessary result columns/rows, and retest representative parameter distributions.
+**Answer:** Capture the actual execution plan and runtime metrics, then address scans, poor cardinality estimates, missing/incorrect indexes, excessive reads, implicit conversions (comparing a `varchar` column to an `nvarchar` parameter forces a type conversion that can disable the index), and parameter-sensitive plans (parameter sniffing: the plan cached for the first parameter value, e.g. a customer with 3 orders, is reused for a customer with 3 million and is slow). Keep transactions efficient, avoid unnecessary result columns/rows, and retest representative parameter distributions.
 
 ###### 15. If asked to create a new project, would you choose code-first or database-first, and why? (PDF p. 15)
 **Answer:** Choose code-first when the application team owns the schema and wants versioned model migrations; choose database-first when an existing/shared database is authoritative or governed separately. Review generated migrations/SQL and agree on schema ownership before choosing.

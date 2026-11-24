@@ -15,10 +15,14 @@
 **Answer:** Install a supported Node.js version, then install the Angular CLI with `npm install -g @angular/cli` if global CLI use is desired. Create a project with `ng new app-name`, enter the directory, and run it with `ng serve`.
 
 ### 5. What is AOT? (PDF p. 8)
-**Answer:** Ahead-of-Time compilation compiles Angular templates and components during the build rather than in the browser at runtime. It can improve startup and catch template errors earlier; production builds use AOT by default.
+**Answer:** Ahead-of-Time compilation compiles Angular templates and components during the build rather than in the browser at runtime. It can improve startup and catch template errors earlier; production builds use AOT by default. (The alternative, JIT, compiles in the browser at runtime.)
 
 ### 6. What are decorators? (PDF p. 8)
 **Answer:** Decorators attach metadata to classes or members for Angular's compiler and dependency-injection system. Examples include `@Component`, `@Injectable`, `@Input`, and `@Directive`.
+```ts
+@Injectable({ providedIn: 'root' })   // metadata: tells Angular's DI this class can be injected
+export class CartService {}
+```
 
 ### 7. How do you create a component? (PDF p. 8)
 **Answer:** Use `ng generate component component-name` (or `ng g c component-name`), then configure its template, styles, and class. In modern Angular, components are standalone by default in new projects and can be imported directly where needed.
@@ -27,7 +31,7 @@
 **Answer:** The browser loads the generated entry HTML and JavaScript bundle. The bootstrap entry point (for example, `bootstrapApplication(AppComponent, ...)` in modern standalone apps, or `bootstrapModule(AppModule)` in module-based apps) creates the root component and renders it.
 
 ### 9. `package.json` vs. `package-lock.json` (PDF p. 8)
-**Answer:** `package.json` declares project metadata, scripts, and dependency ranges. `package-lock.json` records the resolved dependency tree and versions so installs can be reproducible; commit both and use `npm ci` in CI.
+**Answer:** `package.json` declares project metadata, scripts, and dependency ranges. `package-lock.json` records the resolved dependency tree and versions so installs can be reproducible; commit both and use `npm ci` in CI. Example: `package.json` says `"rxjs": "^7.8.0"` (any 7.x from 7.8.0); the lock file pins the exact `7.8.1` that was installed, so every machine gets the same version. `npm ci` installs exactly what the lock file says and fails if the two disagree.
 
 ### 10. How do you download or install other packages? (PDF p. 8)
 **Answer:** Run `npm install package-name` to add a dependency (or `npm install -D package-name` for a development dependency). This updates the manifest and lockfile; use `npm ci` for reproducible clean installs.
@@ -61,9 +65,22 @@
 
 ### 20. Difference between string interpolation and property binding (PDF p. 8)
 **Answer:** Interpolation writes an expression's string representation into text content. Property binding assigns a value to a DOM or component property, preserving non-string values such as booleans; use it for attributes/inputs rather than textual display.
+```html
+<p>{{ title }}</p>                 <!-- text content -->
+<button [disabled]="busy">Save</button>  <!-- busy is a real boolean -->
+<button disabled="{{ busy }}">Save</button> <!-- Bug: string "false" is still present, so the button stays disabled -->
+```
 
 ### 21. What is an HTTP interceptor? How do you implement it? (PDF p. 8)
 **Answer:** An interceptor observes or transforms outgoing HTTP requests and incoming responses, often for authentication headers, logging, or centralized error handling. Implement `HttpInterceptorFn` (modern functional style) or `HttpInterceptor`, register it with `provideHttpClient(withInterceptors([...]))` or the module-based provider configuration, and clone immutable requests when changing them.
+```ts
+export const authInterceptor: HttpInterceptorFn = (req, next) => {
+  const token = inject(AuthService).token;                 // assumes an AuthService with a token
+  const authed = req.clone({ setHeaders: { Authorization: `Bearer ${token}` } }); // req is immutable: clone, don't edit
+  return next(authed);                                      // pass the modified request along
+};
+// register: provideHttpClient(withInterceptors([authInterceptor]))
+```
 
 ### 22. What are services in Angular? (PDF p. 8)
 **Answer:** Services are injectable classes that encapsulate reusable business logic, data access, or shared state outside the view. Mark one with `@Injectable` and provide it at the appropriate scope, commonly `providedIn: 'root'`.
@@ -93,7 +110,13 @@
 **Answer:** Angular has no built-in feature formally called “HTTP filters” equivalent to ASP.NET filters. The likely intended concept is HTTP interceptors, which can cross-cut requests/responses for headers, logging, and errors; server-side filtering belongs in API query parameters.
 
 ### 31. How do you add HTTP headers or authorization in a POST call? (PDF p. 8)
-**Answer:** Pass an `HttpHeaders` object in the request options, or add the authorization header in an interceptor. Example: `http.post(url, body, { headers: new HttpHeaders({ Authorization: \`Bearer ${token}\` }) })`; never hard-code secrets in a frontend bundle.
+**Answer:** Pass an `HttpHeaders` object in the request options, or add the authorization header in an interceptor. Example (assumes `token` holds the user's access token):
+```ts
+this.http.post(url, body, {
+  headers: new HttpHeaders({ Authorization: `Bearer ${token}` })
+});
+```
+Never hard-code secrets in a frontend bundle: anyone can read it.
 
 ### 32. What are pipes and their types? (PDF p. 8)
 **Answer:** Pipes transform values for display in templates. Angular provides built-ins such as `date`, `currency`, `number`, `percent`, `json`, `async`, and `slice`; pipes can be pure (default) or impure, with impure pipes requiring care because they run frequently.
@@ -109,6 +132,12 @@
 
 ### 36. Different types of Subject (PDF p. 8)
 **Answer:** `Subject` has no retained initial/latest value; `BehaviorSubject` requires an initial value and immediately emits the current one to new subscribers; `ReplaySubject` replays a configured buffer; `AsyncSubject` emits its final value when completed.
+```ts
+const b = new BehaviorSubject(0);
+b.next(1);
+b.subscribe(v => console.log(v)); // prints 1 immediately (latest value); a plain Subject would print nothing yet
+b.next(2);                        // prints 2
+```
 
 ### 37. Can asynchronous programming be done in Angular? How? (PDF p. 8)
 **Answer:** Yes. Use Promises or, more commonly for HTTP and event streams, RxJS Observables; compose work with operators and let Angular's change-detection integration update the view.
@@ -130,12 +159,23 @@
 
 ### 43. Have you used RxJS? Why is it used? (PDF p. 9)
 **Answer:** RxJS provides Observables and operators for composing asynchronous streams such as HTTP, user input, and events. A good interview response should describe a real use, such as debouncing a search input and cancelling stale requests with `switchMap`.
+```ts
+this.results$ = this.search.valueChanges.pipe(   // search is a FormControl: emits on each keystroke
+  debounceTime(300),                              // wait 300 ms after the last keystroke
+  distinctUntilChanged(),                         // ignore if the text did not change
+  switchMap(q => this.http.get(`/api?q=${q}`))    // new query cancels the previous in-flight request
+);
+```
 
 ### 44. Give some RxJS operators (PDF p. 9)
 **Answer:** Common operators include transformation (`map`, `switchMap`, `mergeMap`), filtering (`filter`, `take`, `debounceTime`, `distinctUntilChanged`), combination (`combineLatest`, `forkJoin`), and error/lifecycle handling (`catchError`, `retry`, `takeUntil`).
 
 ### 45. What is the `map` operator? (PDF p. 9)
 **Answer:** `map` transforms each emitted value into another value while preserving the stream structure. It is for synchronous value transformation; use a flattening operator such as `switchMap` when the transformation returns an Observable.
+```ts
+ids$.pipe(map(id => id * 2));                       // value to value
+ids$.pipe(switchMap(id => http.get(`/api/${id}`))); // value to Observable, result is flattened
+```
 
 ### 46. What is a template reference variable? (PDF p. 9)
 **Answer:** A variable declared with `#name` in a template references an element, directive, or component instance. It can be used elsewhere in that template, for example to read an input's value or call a component's exposed API.

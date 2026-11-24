@@ -11,10 +11,32 @@ This guide brings together Azure deployment and CI/CD, Docker/container, Kuberne
 **Answer:** Continuous integration (CI) frequently integrates changes and runs automated validation. Continuous delivery/deployment (CD) packages validated changes and promotes them through environments, with manual approvals where required or automatic deployment when policy allows.
 
 ### How would you implement CI/CD for a .NET application using Azure DevOps?
-**Answer:** Define a YAML pipeline in source control that restores dependencies, builds, runs unit and integration tests, performs code/dependency/security checks, and publishes a versioned artifact or container image. Deploy the same immutable artifact to test/staging/production environments, apply approvals and health checks, and support rollback or slot-based deployment. Use least-privilege service connections, federated identity where available, and secure variable groups/Key Vault integration for secrets.
+**Answer:** Define a YAML pipeline in source control that restores dependencies, builds, runs unit and integration tests, performs code/dependency/security checks, and publishes a versioned artifact or container image. Deploy the same immutable artifact to test/staging/production environments, apply approvals and health checks, and support rollback or slot-based deployment. Use least-privilege service connections (the stored credential Azure Pipelines uses to reach Azure), federated identity where available (the pipeline gets short-lived tokens, so no stored password), and secure variable groups/Key Vault integration for secrets.
+
+```yaml
+# azure-pipelines.yml (minimal shape)
+stages:
+- stage: Build
+  jobs:
+  - job: build
+    steps:
+    - script: dotnet test                       # fail fast: a red test stops the pipeline
+    - script: dotnet publish -c Release -o $(Build.ArtifactStagingDirectory)
+    - publish: $(Build.ArtifactStagingDirectory)
+      artifact: drop                            # built ONCE, versioned
+- stage: DeployStaging
+  dependsOn: Build
+  jobs:
+  - deployment: staging
+    environment: staging                        # approvals/checks attach to the environment
+    strategy:
+      runOnce:
+        deploy:
+          steps: [ ... ]                        # deploys the same "drop" artifact
+```
 
 ### What is the difference between a build pipeline and a release/deployment pipeline?
-**Answer:** A build stage validates source and creates a versioned artifact. Deployment stages take that artifact and promote it into one or more environments with environment-specific configuration, approvals, health verification, and rollback. Keeping the artifact immutable avoids rebuilding different binaries for each environment.
+**Answer:** A build stage validates source and creates a versioned artifact. Deployment stages take that artifact and promote it into one or more environments with environment-specific configuration, approvals, health verification, and rollback. Keeping the artifact immutable avoids rebuilding different binaries for each environment. Bad: rebuild for production, so the binary that passed testing is not the one shipped (a changed dependency or compiler could introduce a bug nobody tested). Good: build once, promote that same artifact, and change only the configuration per environment.
 
 ### What should a CI/CD pipeline do for a containerized AKS workload?
 **Answer:**
@@ -22,7 +44,7 @@ This guide brings together Azure deployment and CI/CD, Docker/container, Kuberne
 2. Build a Docker image from the tested source and scan it.
 3. Tag the image with a unique build/release identifier and push it to Azure Container Registry (ACR).
 4. Validate Kubernetes manifests or Helm charts, including environment-specific values.
-5. Deploy the exact image digest to a non-production environment and run smoke/integration checks.
+5. Deploy the exact image digest (the `sha256:...` content hash, which unlike a tag cannot be moved) to a non-production environment and run smoke/integration checks.
 6. Promote through controlled environments, verify readiness and telemetry, and retain a rollback path.
 
 Do not place long-lived credentials in pipeline YAML or images. Restrict service connections and registry/cluster access to the minimum required permissions.
@@ -53,11 +75,31 @@ docker push myregistry.azurecr.io/my-service:build-id
 
 For a .NET service, use a multi-stage build: restore/build/publish with an SDK image, then copy only the published output into a supported runtime image. Exclude unnecessary files with `.dockerignore`.
 
+```dockerfile
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build   # big image with compilers: used only to build
+WORKDIR /src
+COPY . .
+RUN dotnet publish -c Release -o /app            # output goes to /app in this stage
+
+FROM mcr.microsoft.com/dotnet/aspnet:8.0         # small runtime-only image: this is what ships
+WORKDIR /app
+COPY --from=build /app .                         # copy only the published output, no SDK or source
+USER app                                         # non-root (the `app` user exists in .NET 8+ images)
+ENTRYPOINT ["dotnet", "MyService.dll"]
+```
+
 ### How do you choose a base image for a microservice?
 **Answer:** Match the supported runtime and CPU architecture; prefer a trusted, maintained, minimal image compatible with the application's native dependencies and operational requirements. Consider patch cadence, image size, debugging needs, and organization policy. Pin a production image version or digest for reproducibility; do not select an image solely by its tag.
 
 ### Are Docker tags immutable?
 **Answer:** Not necessarily. A tag is a human-readable reference and registries can allow it to be moved to a different image. Use unique build tags and deploy by immutable digest when you need to ensure the exact tested image is promoted. Avoid relying on `latest` for production releases.
+
+```text
+Bad:  image: myregistry.azurecr.io/my-service:latest
+      # someone re-pushes "latest" next week; a pod restart silently runs different code
+Good: image: myregistry.azurecr.io/my-service@sha256:ab12...   # digest: always exactly the tested bytes
+      # or at least a unique tag such as :build-1842
+```
 
 ### What are Docker image security best practices?
 **Answer:** Use trusted, patched base images; minimize installed packages and build context; run as a non-root user; avoid embedding secrets; scan dependencies and images; pin dependencies where appropriate; restrict capabilities; and retain image provenance/signature information when the release process supports it.
@@ -74,7 +116,7 @@ For a .NET service, use a multi-stage build: restore/build/publish with an SDK i
 **Answer:** Kubernetes orchestrates containerized workloads. It schedules pods onto nodes and provides declarative workload management, service discovery, health-based replacement, rollout, and scaling. It adds operational complexity and is not automatically the right choice for every application.
 
 ### What is the difference between a container and a pod?
-**Answer:** A container runs a process from an image. A pod is Kubernetes' smallest schedulable unit and contains one or more co-located containers. Containers in a pod share the pod's network namespace/IP and can share mounted volumes; separate unrelated applications into separate pods so they can scale and roll out independently.
+**Answer:** A container runs a process from an image. A pod is Kubernetes' smallest schedulable unit and contains one or more co-located containers. Containers in a pod share the pod's network namespace/IP (they reach each other via `localhost`) and can share mounted volumes; separate unrelated applications into separate pods so they can scale and roll out independently.
 
 ### What is a Deployment?
 **Answer:** A Deployment manages a desired number of interchangeable pod replicas and coordinates updates and rollbacks. It creates and manages ReplicaSets; the desired replica count and rollout strategy are declared rather than managed by manually creating individual pods.
@@ -82,8 +124,16 @@ For a .NET service, use a multi-stage build: restore/build/publish with an SDK i
 ### What is a Kubernetes Service?
 **Answer:** A Service provides a stable network identity and load-balances traffic to a set of matching ready pods. Pods may be replaced and receive different IPs, while clients continue to use the Service's stable name/address.
 
+```yaml
+kind: Service
+metadata: { name: orders }
+spec:
+  selector: { app: orders }      # routes to any ready pod labelled app=orders
+  ports: [{ port: 80, targetPort: 8080 }]   # clients call http://orders:80, pods listen on 8080
+```
+
 ### What is Ingress, and how does external HTTP traffic reach a pod?
-**Answer:** An ingress controller or other cluster entry point accepts external traffic and applies host/path/TLS routing rules. It forwards traffic to a Kubernetes Service, which selects ready pod endpoints; cluster networking routes it to a pod. Configure TLS, timeouts, authentication, health checks, and observability. Ingress is not the application Service itself.
+**Answer:** An ingress controller or other cluster entry point accepts external traffic and applies host/path/TLS routing rules. It forwards traffic to a Kubernetes Service, which selects ready pod endpoints; cluster networking routes it to a pod. Path of one request: `Browser -> DNS/public IP -> load balancer -> ingress controller (matches host/path, terminates TLS) -> Service (orders) -> one ready pod -> container`. Configure TLS, timeouts, authentication, health checks, and observability. Ingress is not the application Service itself.
 
 ### Can one pod contain multiple different containers?
 **Answer:** Yes, when the containers are tightly coupled and need to share lifecycle, network, or volumes—for example, an application with a supporting sidecar. They can use different images. Do not put unrelated independently scalable services in one pod.
@@ -94,17 +144,29 @@ For a .NET service, use a multi-stage build: restore/build/publish with an SDK i
 ### What are readiness and liveness probes?
 **Answer:** A readiness probe indicates whether a pod should receive traffic. A liveness probe indicates whether a container is unhealthy enough to restart. Configure probes to represent actual health without making transient downstream outages cause restart loops; startup probes can protect slow-starting containers from premature liveness failures.
 
+```yaml
+readinessProbe: { httpGet: { path: /ready, port: 8080 } }  # fails -> pod removed from Service, NOT restarted
+livenessProbe:  { httpGet: { path: /live,  port: 8080 } }  # fails repeatedly -> container restarted
+```
+Bad: `/live` calls the database. The database blips, every pod fails liveness, all restart at once, and a short outage becomes a longer one. Good: `/live` checks only the process itself; put dependency checks in `/ready`.
+
 ### How should Kubernetes workloads scale?
 **Answer:** Set realistic CPU/memory requests and limits, then choose replica counts and autoscaling from observed workload metrics and service objectives. A Horizontal Pod Autoscaler can adjust replicas; cluster/node autoscaling may add capacity when needed. Scaling policies should be tested under load and account for downstream capacity and startup time.
 
 ### What is a Kubernetes namespace?
-**Answer:** A namespace partitions namespaced Kubernetes objects within a cluster, helping organize teams, applications, and environments. It can be combined with RBAC, resource quotas, and network policies, but is not by itself a strong security boundary between hostile tenants.
+**Answer:** A namespace partitions namespaced Kubernetes objects within a cluster, helping organize teams, applications, and environments. It can be combined with RBAC (role-based access control), resource quotas, and network policies, but is not by itself a strong security boundary between hostile tenants.
 
 ### What is a ConfigMap vs. a Secret?
-**Answer:** A ConfigMap holds non-sensitive configuration. A Secret is intended for sensitive values, but access still requires RBAC and secure cluster configuration; do not assume that a Secret object alone provides adequate encryption or secret management. Prefer workload identity or an integrated secret store when appropriate.
+**Answer:** A ConfigMap holds non-sensitive configuration. A Secret is intended for sensitive values, but by default it is only base64-encoded (not encrypted) and access still requires RBAC and secure cluster configuration; do not assume that a Secret object alone provides adequate encryption or secret management. Prefer workload identity or an integrated secret store when appropriate.
 
 ### What are resource requests and limits?
 **Answer:** Requests describe resources Kubernetes should reserve/consider when scheduling a pod. Limits cap consumption for supported resources. Set them based on measurement: incorrect requests can waste capacity or cause scheduling problems, while overly low limits can throttle CPU or terminate memory-heavy containers.
+
+```yaml
+resources:
+  requests: { cpu: 250m, memory: 256Mi }   # scheduler reserves this; 250m = a quarter of one CPU core
+  limits:   { cpu: 500m, memory: 512Mi }   # CPU over limit is throttled (slow); memory over limit is OOMKilled (restart)
+```
 
 ## 4. AKS, Helm, networking, and identity
 

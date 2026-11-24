@@ -10,13 +10,13 @@ The following inventory reflects services and technologies explicitly named in `
 
 ### Application hosting and delivery
 
-- **Azure App Service / Azure Web App:** The CV describes migrating an application to Azure App Service and Azure SQL. It also lists Azure Web App/App Service in project environments. This supports discussion of managed web/API hosting and migration; the CV does not specify plan SKU, slots, VNet integration, or deployment configuration.
+- **Azure App Service / Azure Web App:** The CV describes migrating an application to Azure App Service and Azure SQL. It also lists Azure Web App/App Service in project environments. This supports discussion of managed web/API hosting and migration; the CV does not specify plan SKU (pricing tier), slots, VNet integration, or deployment configuration.
 - **Azure DevOps:** Listed in multiple project environments for delivery work. The CV does not detail particular Repos, Boards, Pipelines, service connections, environments, or YAML tasks; explain only the actual Azure DevOps responsibilities you performed.
 - **Docker and Kubernetes:** Listed in an earlier project environment, but not identified there as Azure AKS. Discuss container/Kubernetes experience separately from AKS-specific operational experience unless you can confirm AKS usage.
 
 ### Identity, network, and application monitoring
 
-- **Azure Active Directory:** Listed in project environments. This is the former name of Microsoft Entra ID. The CV does not specify whether this work involved workforce identity, app registrations, OAuth/OIDC configuration, RBAC, or workload identities; be precise about your actual role.
+- **Azure Active Directory:** Listed in project environments. This is the former name of Microsoft Entra ID. The CV does not specify whether this work involved workforce identity, app registrations, OAuth/OIDC (OpenID Connect, the sign-in layer on OAuth) configuration, RBAC, or workload identities; be precise about your actual role.
 - **Azure Firewall:** Listed in environments for multiple projects. The CV does not describe rule design, network topology, policy management, or incident operations; do not imply those responsibilities unless accurate.
 - **Azure Application Insights / Application Insights:** The CV states that Azure Application Insights monitoring/logging was implemented for .NET APIs, including APIs using .NET 8/.NET 9. This gives a concrete observability example; be ready to describe which telemetry, alerts, dashboards, and diagnostic workflows you actually configured.
 
@@ -25,7 +25,7 @@ The following inventory reflects services and technologies explicitly named in `
 - **Azure SQL Database / Azure SQL Server:** The CV describes migrating an application's database to Azure SQL and lists Azure SQL across several application environments. Discuss schema/data migration, connection configuration, performance, and secure access only to the extent you owned them.
 - **Azure Blob Storage:** Listed for a fault-tolerant file-upload application. The project environment also lists retry policies and large-file upload support; this can anchor discussion of object storage, retry behavior, and upload design.
 - **Azure Files / File Share:** Listed in the same file-upload application environment. The CV does not detail share provisioning, identity, mount protocol, network restrictions, or lifecycle administration.
-- **Azure Data Factory:** Listed in ETL/data environments. Explain pipeline orchestration, source/target integrations, scheduling, and monitoring only if those were part of your own work.
+- **Azure Data Factory:** Listed in ETL (extract, transform, load) / data environments. Explain pipeline orchestration, source/target integrations, scheduling, and monitoring only if those were part of your own work.
 - **Azure Databricks:** The CV describes leading design/development of an Azure Databricks ETL pipeline. This is a direct project anchor for data engineering and pipeline discussion; cluster policy, workspace administration, and networking are not specified.
 - **Microsoft Fabric and Power BI:** The CV describes ETL with Python/Pandas, Azure Functions, and Microsoft Fabric, with operational and analytical reporting in Power BI. Discuss the implemented data flow and your specific Fabric/Power BI role rather than assuming tenant/workspace administration.
 
@@ -59,14 +59,21 @@ Microsoft Entra ID is Microsoft's cloud identity and access management service (
 - **Resource group:** A lifecycle and management container for related Azure resources; resources in a group can have different regions.
 
 ### Azure Resource Manager (ARM)
-Azure Resource Manager is the management plane used to deploy and manage Azure resources. ARM templates, Bicep, and Terraform can describe infrastructure as code. Separate resource-management operations from application data-plane access—for example, creating a Storage account versus reading a blob.
+Azure Resource Manager is the management plane used to deploy and manage Azure resources. ARM templates, Bicep, and Terraform can describe infrastructure as code (IaC: infrastructure defined in version-controlled files, not clicked together in the portal). Separate resource-management operations from application data-plane access—for example, creating a Storage account versus reading a blob.
 
 ### Azure RBAC
 Azure role-based access control grants principals permissions on a management scope such as a management group, subscription, resource group, or resource. Assign the least-privilege built-in or custom role at the narrowest practical scope, and review inherited permissions.
 
+```text
+Scope hierarchy:  Management group > Subscription > Resource group > Resource   (roles inherit downward)
+Bad:  Contributor on the whole subscription so a pipeline can deploy one API
+      -> a leaked pipeline credential can change or delete every resource in the subscription
+Good: Contributor on only rg-orders-prod (or a data-plane role such as "Storage Blob Data Reader" on one account)
+```
+
 ### Azure Policy, resource locks, and tags
 - **Azure Policy** evaluates or enforces organizational rules such as allowed regions, required tags, or diagnostic settings.
-- **Resource locks** help prevent accidental deletion or modification; they do not replace RBAC.
+- **Resource locks** help prevent accidental deletion or modification; they do not replace RBAC. Example: a `CanNotDelete` lock on the production SQL server stops even an Owner from deleting it until the lock is removed, but it does not stop someone with write access from changing its settings or reading its data.
 - **Tags** add metadata such as environment, owner, cost center, and application for governance and cost reporting.
 
 ### Cost Management
@@ -78,13 +85,21 @@ Use budgets, cost alerts, tags, and cost analysis to understand spend by subscri
 - **Human identity:** An employee or administrator signing in through Microsoft Entra ID; secure privileged operations with role-based access and appropriate sign-in controls.
 - **Application/workload identity:** An application authenticating to another service without a person present.
 - **Managed identity:** An Azure-managed identity for a supported resource. It avoids storing an application credential in configuration.
+
+```csharp
+// Bad: a client secret in appsettings.json can leak through source control or logs, and must be rotated by hand
+new ClientSecretCredential(tenantId, clientId, "s3cr3t...");
+// Good: no secret in code; uses the managed identity when running in Azure (your signed-in developer account locally)
+var cred = new DefaultAzureCredential();
+var kv = new SecretClient(new Uri("https://my-vault.vault.azure.net"), cred);   // assumes a vault named my-vault
+```
 - **Service principal/app registration:** An application identity used for authentication and permissions; credentials or certificates must be protected and rotated if used.
 
 ### System-assigned vs. user-assigned managed identity
 A system-assigned identity has the lifecycle of its Azure resource. A user-assigned identity is a separate resource that can be attached to multiple supported resources and can persist when an individual workload is replaced. Choose based on lifecycle and access-boundary needs, then grant only necessary roles.
 
 ### Authentication and authorization
-Authentication establishes who or what is calling. Authorization decides which resources and operations that identity may use. A valid Entra token does not automatically grant access to every Azure resource; configure the required application permissions or Azure data-plane roles and enforce application-level authorization as well.
+Authentication establishes who or what is calling. Authorization decides which resources and operations that identity may use. A valid Entra token does not automatically grant access to every Azure resource (example: the identity can sign in, yet Key Vault still answers 403 Forbidden because no Key Vault role was assigned); configure the required application permissions or Azure data-plane roles and enforce application-level authorization as well.
 
 ## 4. Azure networking
 
@@ -92,17 +107,17 @@ Authentication establishes who or what is calling. Authorization decides which r
 A Virtual Network (VNet) is a private network boundary in Azure. Subnets divide its address space for workloads or network components. Design address ranges and subnet capacity before deployment, especially for private endpoints and AKS.
 
 ### Network Security Group
-An NSG applies inbound and outbound allow/deny rules to network interfaces or subnets. Review effective rules and avoid assuming that a subnet is private merely because it has an NSG.
+An NSG applies inbound and outbound allow/deny rules to network interfaces or subnets. Review effective rules and avoid assuming that a subnet is private merely because it has an NSG. Rules are evaluated by priority number (lowest first) and the first match wins: an `Allow 443 from Internet` rule at priority 100 takes effect before a `Deny All` at priority 200.
 
 ### User-defined routes and network egress
 User-defined routes (UDRs) can direct traffic through a firewall, network virtual appliance, or other next hop. A NAT Gateway provides controlled outbound connectivity for supported subnet workloads. Validate DNS, routing, and firewall rules together when diagnosing connectivity.
 
 ### Private Endpoint and Private DNS
-A Private Endpoint gives a supported Azure service a private IP address in a VNet. Private DNS zones provide the expected private name resolution. Private connectivity alone does not authorize requests: identity, service permissions, firewall configuration, DNS, and routing must all be correct.
+A Private Endpoint gives a supported Azure service a private IP address in a VNet. Private DNS zones provide the expected private name resolution. Private connectivity alone does not authorize requests (typical failure: the API resolves `mydb.database.windows.net` to the old public IP because the private DNS zone is not linked to the VNet, so the call is blocked even though the private endpoint exists): identity, service permissions, firewall configuration, DNS, and routing must all be correct.
 
 ### Load balancers and application entry points
-- **Azure Load Balancer:** Layer-4 traffic distribution for supported network workloads.
-- **Azure Application Gateway:** Layer-7 web traffic management, TLS termination, and optional Web Application Firewall (WAF) capabilities.
+- **Azure Load Balancer:** Layer-4 (TCP/UDP level, no knowledge of URLs) traffic distribution for supported network workloads.
+- **Azure Application Gateway:** Layer-7 (HTTP level: can route by URL path or host) web traffic management, TLS termination, and optional Web Application Firewall (WAF) capabilities.
 - **Azure Front Door:** Global edge entry, routing, acceleration, and optional WAF capabilities.
 - **Azure API Management (APIM):** An API gateway and API-management platform for publishing APIs and applying policies such as authentication integration, quotas, and transformations.
 
@@ -150,13 +165,22 @@ Azure Storage includes Blob, Queue, Table, and Files services. Blob Storage is c
 Azure SQL Database is a managed relational database service; SQL Managed Instance offers broader SQL Server compatibility and instance-level capabilities. Select based on feature compatibility, migration needs, availability, network access, performance, and cost. EF Core can access these services through supported database providers.
 
 ### Azure Service Bus
-Service Bus provides enterprise messaging with queues, topics/subscriptions, dead-lettering, and delivery features. Use it to decouple API requests from background processing or distribute messages among independent consumers. Design for retries, duplicate delivery, idempotency, poison messages, and queue-age monitoring.
+Service Bus provides enterprise messaging with queues, topics/subscriptions, dead-lettering, and delivery features. Use it to decouple API requests from background processing or distribute messages among independent consumers. Design for retries, duplicate delivery, idempotency (processing the same message twice has the same effect as once), poison messages (messages that always fail and would loop forever, so they are moved to a dead-letter queue after a max delivery count), and queue-age monitoring.
+
+```csharp
+// Bad: a redelivered "ChargeCard" message charges the customer twice
+await Charge(msg.OrderId, msg.Amount);
+// Good: skip work already done (assumes a store that records handled message ids)
+if (await store.AlreadyHandled(msg.MessageId)) return;
+await Charge(msg.OrderId, msg.Amount);
+await store.MarkHandled(msg.MessageId);
+```
 
 ### Event Grid and Event Hubs
 - **Event Grid** routes event notifications to subscribers.
 - **Event Hubs** ingests high-volume event streams for independent consumers and processing.
 
-Select based on whether the requirement is event notification/routing, durable business messaging, or high-throughput streaming.
+Select based on whether the requirement is event notification/routing, durable business messaging, or high-throughput streaming. Examples: "a blob was uploaded, tell subscribers" is Event Grid; "process this order exactly once by one worker" is Service Bus; "ingest 50,000 telemetry events per second" is Event Hubs.
 
 ## 7. Monitoring, diagnostics, and security
 
@@ -261,7 +285,7 @@ For scenario questions, explain the request/data flow, identity, network path, d
 **Answer:** Azure Service Bus is a managed enterprise messaging service supporting queues and topics, durable delivery, dead-lettering, and competing consumers. A .NET service uses `Azure.Messaging.ServiceBus` clients/processors to send and consume messages; handle retries and idempotency because delivery may be at least once.
 
 ###### 16. How do you decide whether to use a queue or topic in Azure Service Bus? (PDF p. 11)
-**Answer:** Use a queue when one logical consumer group should process each message; competing workers can share the load. Use a topic with subscriptions when a message must be independently delivered to multiple consumer groups, optionally filtered per subscription.
+**Answer:** Use a queue when one logical consumer group should process each message; competing workers can share the load. Use a topic with subscriptions when a message must be independently delivered to multiple consumer groups, optionally filtered per subscription. Example: an `OrderPlaced` message that only the fulfilment worker handles is a queue; the same message that billing, email, and analytics each need their own copy of is a topic with three subscriptions.
 
 ###### 17. What is Event Grid in Azure, and when/why do we use it? (PDF p. 11)
 **Answer:** Event Grid is a managed event-routing service for discrete notifications about state changes, such as a blob being created. It routes events from publishers to subscribers with filtering and retry/dead-letter options; use it for event notification rather than long-lived work queues.
@@ -291,7 +315,7 @@ For scenario questions, explain the request/data flow, identity, network path, d
 **Answer:** Instrument each service with Application Insights/OpenTelemetry and route telemetry to a shared or centrally queried Log Analytics workspace, while retaining per-resource access controls and service/environment dimensions. Use Azure Monitor workbooks/dashboards and shared correlation IDs to view cross-service traces; separate resources can still be queried centrally when configured appropriately.
 
 ###### 26. How do you configure deployment parameters (number of pods/max pods/min pods) for an App Service Web App/API? Must every app have separate configuration or can they share one? (PDF p. 12)
-**Answer:** The prompt mixes Kubernetes pod terminology with App Service, which scales using App Service plan instances and per-app settings, not Kubernetes pods. For AKS, configure replicas and autoscaling (for example, HPA) in deployment/cluster configuration. Each workload needs an explicit scaling policy, though reusable templates/IaC can centrally define common defaults; validate current App Service scaling limits and plan topology.
+**Answer:** The prompt mixes Kubernetes pod terminology with App Service, which scales using App Service plan instances and per-app settings, not Kubernetes pods. For AKS, configure replicas and autoscaling (for example, HPA, the Horizontal Pod Autoscaler, which adds or removes pod replicas based on CPU or other metrics) in deployment/cluster configuration. Each workload needs an explicit scaling policy, though reusable templates/IaC can centrally define common defaults; validate current App Service scaling limits and plan topology.
 
 ---
 
