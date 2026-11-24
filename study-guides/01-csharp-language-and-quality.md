@@ -300,6 +300,112 @@ public async Task<ProductDto?> GetProductAsync(
 
 **Architect note:** Configure `HttpClient` through `IHttpClientFactory` or an appropriate managed client pattern. Define timeout, retry, circuit-breaker, and fallback behavior based on the dependency and operation. Do not blindly retry non-idempotent requests.
 
+##### 2.14 What's new in recent C# releases (C# 14 and C# 15)
+
+| C# | .NET | Released | Support |
+|---|---|---|---|
+| C# 14 | .NET 10 | Nov 2025 | LTS |
+| C# 15 | .NET 11 | Nov 2026 | STS (supported until Nov 2028) |
+
+The language version is tied to the target framework (C# 15 is the default for `net11.0`). Older projects need an explicit `LangVersion`, and the newest compiler does not backport features to old runtimes unless noted.
+
+###### C# 15 (.NET 11)
+
+**Union types.** The `union` keyword declares a value that is exactly one of a fixed set of case types. The compiler checks `switch` expressions over it for exhaustiveness.
+
+```csharp
+public union Pet(Cat, Dog, Bird);
+
+string Describe(Pet pet) => pet switch
+{
+    Cat c  => $"Cat {c.Name}",
+    Dog d  => $"Dog {d.Name}",
+    Bird b => $"Bird {b.Name}"
+    // no discard needed; adding a new case produces a compiler warning here
+};
+```
+
+**Closed hierarchies.** The `closed` modifier restricts derivation to the declaring assembly, so the compiler knows every direct descendant and can check exhaustiveness without a `_` arm.
+
+```csharp
+public closed record class GateState;
+public record class Closed : GateState;
+public record class Open(float Percent) : GateState;
+```
+
+**Collection expression arguments.** A leading `with(...)` element passes arguments (capacity, comparer) to the collection's constructor or factory.
+
+```csharp
+List<string> names = [with(capacity: values.Length * 2), .. values];
+HashSet<string> set = [with(StringComparer.OrdinalIgnoreCase), "Hello", "HELLO"];
+```
+
+**Extension indexers.** Indexers can be declared inside an `extension` block.
+
+```csharp
+extension(IEnumerable<int> sequence)
+{
+    public int this[int index] => sequence.ElementAt(index);
+}
+```
+
+**Labeled `break` / `continue`.** Exit or continue an outer loop without flag variables or `goto`.
+
+```csharp
+outer: for (int row = 0; row < grid.Height; row++)
+{
+    for (int col = 0; col < grid.Width; col++)
+        if (grid[row, col].IsBlocked) continue outer;
+}
+```
+
+**Non-virtual static interface members on older runtimes.** Interfaces can declare static helper methods even when the target runtime lacks default interface implementation support. Instance defaults, `static abstract`/`static virtual`, and protected members still need runtime support.
+
+**Memory safety (preview).** Requires `LangVersion` `preview`. Taking addresses, `fixed`, and `sizeof` no longer require an `unsafe` context; dereferencing a pointer still does. Adds `unsafe(expression)` and a `safe` contextual keyword. It is a multi-release effort, so do not rely on it in production.
+
+**Runtime-level change worth naming:** .NET 11 starts replacing compiler-generated `async` state machines with native runtime async support. Your `async`/`await` code does not change.
+
+###### C# 14 (.NET 10)
+
+**Extension members.** The new `extension` block adds extension *properties*, operators, and static members, not just methods. Existing `this`-style extension methods keep working.
+
+```csharp
+public static class StringExtensions
+{
+    extension(string value)
+    {
+        public bool IsEmpty => value.Length == 0;
+    }
+
+    extension(string)   // static members on the type itself
+    {
+        public static string Empty2 => "";
+    }
+}
+```
+
+**`field` keyword.** Refers to the compiler-generated backing field inside a property accessor, so you can add logic to one accessor without declaring a field.
+
+```csharp
+public string Name
+{
+    get;
+    set => field = value?.Trim() ?? throw new ArgumentNullException(nameof(value));
+}
+```
+
+Caveat: if a type already has a member named `field`, use `@field` or `this.field`.
+
+**Null-conditional assignment.** `?.` and `?[]` are allowed on the left side of an assignment. The right side is evaluated only if the receiver is non-null. `++`/`--` are not allowed.
+
+```csharp
+customer?.Order = CreateOrder();   // CreateOrder() not called when customer is null
+```
+
+**Other C# 14 features:** implicit conversions between `Span<T>`/`ReadOnlySpan<T>` and arrays, `nameof` on unbound generics (`nameof(List<>)`), lambda parameter modifiers without types (`(text, out result) => ...`), `partial` constructors and events, and user-defined compound assignment operators (`+=`).
+
+**Interview angle:** Be ready to explain what problem each solves (exhaustiveness for union/closed types, API ergonomics for extension members, removing boilerplate for `field`) and when you would not adopt it (library targeting older frameworks, team on an older SDK, feature still in preview).
+
 ---
 
 #### 3. Bad code to modern C# refactoring
@@ -640,6 +746,8 @@ Use these as the source of truth for language details and version-specific behav
 
 - [C# documentation](https://learn.microsoft.com/en-us/dotnet/csharp/)
 - [What's new in C#](https://learn.microsoft.com/en-us/dotnet/csharp/whats-new/)
+- [What's new in C# 15](https://learn.microsoft.com/en-us/dotnet/csharp/whats-new/csharp-15)
+- [What's new in C# 14](https://learn.microsoft.com/en-us/dotnet/csharp/whats-new/csharp-14)
 - [C# language reference](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/)
 - [C# programming guide](https://learn.microsoft.com/en-us/dotnet/csharp/programming-guide/)
 - [Asynchronous programming with async and await](https://learn.microsoft.com/en-us/dotnet/csharp/asynchronous-programming/)
