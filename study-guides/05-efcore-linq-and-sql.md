@@ -176,6 +176,12 @@ var query = db.Orders
     .Select(o => new { o.Id, o.CreatedAt, o.Total });
 
 string sql = query.ToQueryString();
+
+// Same query, query expression syntax
+var queryQ =
+    from o in db.Orders
+    where o.Status == OrderStatus.Open
+    select new { o.Id, o.CreatedAt, o.Total };
 ```
 
 `ToQueryString()` is useful for debugging, but the executed command can differ due to provider behavior, parameter values, terminal operators, and runtime execution. Also inspect database execution plans and actual I/O.
@@ -187,6 +193,17 @@ var summaries = await db.Orders
     .Where(o => o.CustomerId == customerId)
     .OrderByDescending(o => o.CreatedAt)
     .Select(o => new OrderSummaryDto(
+        o.Id,
+        o.CreatedAt,
+        o.Lines.Sum(line => line.Quantity * line.UnitPrice)))
+    .ToListAsync(cancellationToken);
+
+// Same projection, query expression syntax (the terminal ToListAsync still needs method syntax)
+var summariesQ = await (
+    from o in db.Orders
+    where o.CustomerId == customerId
+    orderby o.CreatedAt descending
+    select new OrderSummaryDto(
         o.Id,
         o.CreatedAt,
         o.Lines.Sum(line => line.Quantity * line.UnitPrice)))
@@ -1021,6 +1038,12 @@ bool hasOpenOrders = await db.Orders
     .AnyAsync(o => o.CustomerId == customerId &&
                    o.Status == OrderStatus.Open,
               cancellationToken);
+
+// Query expression syntax: there is no keyword for Any, so mix in a method call
+bool hasOpenOrdersQ = await (
+    from o in db.Orders
+    where o.CustomerId == customerId && o.Status == OrderStatus.Open
+    select o).AnyAsync(cancellationToken);
 ```
 
 `Count()` asks for the count and may require more work (scanning every matching row to total them, when you only needed to know "is there at least one?"). `Any()` translates to `WHERE EXISTS (...)`, which can stop at the first match. The database optimizer can optimize both, but use the operator that matches the intent.
@@ -1045,7 +1068,24 @@ var result =
     };
 ```
 
-Translation depends on expression shape and provider. Newer .NET/EF Core versions may provide additional query syntax/operator support; check the target version.
+The same left join in method (lambda) syntax:
+
+```csharp
+var resultM = db.Customers
+    .GroupJoin(db.Orders, c => c.Id, o => o.CustomerId, (c, orders) => new { c, orders })
+    .SelectMany(
+        x => x.orders.DefaultIfEmpty(),
+        (x, order) => new { x.c.Id, x.c.Name, OrderId = order == null ? (int?)null : order.Id });
+
+// .NET 10 / EF Core 10: one operator instead of GroupJoin + SelectMany + DefaultIfEmpty
+var resultL = db.Customers.LeftJoin(
+    db.Orders,
+    c => c.Id,
+    o => o.CustomerId,
+    (c, order) => new { c.Id, c.Name, OrderId = order == null ? (int?)null : order.Id });
+```
+
+Translation depends on expression shape and provider. `LeftJoin`/`RightJoin` arrived in .NET 10 / EF Core 10, and a native `FullJoin` is reported for EF Core 11; see [section 22](#linq-version-features) for what each version adds.
 
 ##### 7.4 `GroupBy` translation
 
@@ -1059,6 +1099,13 @@ var totals = await db.OrderLines
         ProductId = group.Key,
         Quantity = group.Sum(line => line.Quantity)
     })
+    .ToListAsync(cancellationToken);
+
+// Same query, query expression syntax
+var totalsQ = await (
+    from line in db.OrderLines
+    group line by line.ProductId into g
+    select new { ProductId = g.Key, Quantity = g.Sum(line => line.Quantity) })
     .ToListAsync(cancellationToken);
 ```
 
@@ -1080,6 +1127,10 @@ var query = db.Customers.Where(c => c.IsActive);
 // Each enumeration can execute the query again.
 var first = await query.ToListAsync(cancellationToken);
 var second = await query.ToListAsync(cancellationToken);
+
+// Query expression syntax: building the query does not run it either
+var queryQ = from c in db.Customers where c.IsActive select c;
+var snapshot = await queryQ.ToListAsync(cancellationToken);   // runs once; reuse `snapshot`
 ```
 
 Materialize once when reuse is intended and the result size is acceptable. Do not materialize early by habit if the query could still be filtered, ordered, or projected in SQL.
@@ -1094,7 +1145,16 @@ IQueryable<Order> q = db.Orders;
 if (!string.IsNullOrWhiteSpace(name)) q = q.Where(o => o.CustomerName.Contains(name));
 if (minTotal is not null)             q = q.Where(o => o.Total >= minTotal);
 var result = await q.ToListAsync();
+
+// Query expression syntax: a where clause can hold the condition directly
+var resultQ = await (
+    from o in db.Orders
+    where string.IsNullOrWhiteSpace(name) || o.CustomerName.Contains(name)   // optional-filter trick: SQL gets (@p IS NULL OR ...)
+    where minTotal == null || o.Total >= minTotal
+    select o).ToListAsync();
 ```
+
+The inline `||` form keeps one query shape (one cached plan) but the SQL carries both branches; chaining `Where` conditionally produces the leanest SQL per request but several shapes.
 
 Avoid string-concatenated SQL from user input (SQL injection: input like `'; DROP TABLE Orders;--` becomes part of the command). Verify that dynamic expression construction preserves parameterization and query-cache-friendly shapes (values should be parameters, not baked-in constants).
 
@@ -1960,6 +2020,20 @@ var rightOnly2 = db.Departments
 var fullOuter2 = leftPart2.Concat(rightOnly2);
 ```
 
+**EF Core 11 (release candidate at the time of writing; verify on the official docs):** a native `FullJoin` operator is reported, translating to one SQL `FULL JOIN`. It follows the `LeftJoin`/`RightJoin` shape, and again has no query-syntax keyword:
+
+```csharp
+var full = db.Employees.FullJoin(
+    db.Departments,
+    e => e.DepartmentId,
+    d => (int?)d.Id,
+    (e, d) => new
+    {
+        Employee   = e != null ? e.Name : null,      // both sides can be null in a full join
+        Department = d != null ? d.Name : null
+    });
+```
+
 - Use `Concat` (`UNION ALL`) rather than `Union` (`UNION`): the two parts never overlap, and `Union` would also remove genuinely duplicate rows and add a distinct/sort step.
 - Both projections must have the same shape: the same property names, order, and types.
 - If the provider can't translate the set operation, run both halves and `Concat` in memory.
@@ -2368,6 +2442,248 @@ var duplicatesQ =
     select new { g.Key.Name, g.Key.City, Copies = g.Count() };
 ```
 
+##### 13.6 The three `GroupBy` overload shapes (key / element / result selector)
+
+```csharp
+// (a) key selector only: each group holds whole Employee rows
+var a  = db.Employees.GroupBy(e => e.DepartmentId)
+                     .Select(g => new { g.Key, Total = g.Sum(e => e.Salary) });
+var aQ = from e in db.Employees
+         group e by e.DepartmentId into g
+         select new { g.Key, Total = g.Sum(e => e.Salary) };
+
+// (b) key + element selector: each group holds only salaries, so Sum()/Max() take no lambda
+var b  = db.Employees.GroupBy(e => e.DepartmentId, e => e.Salary)
+                     .Select(g => new { g.Key, Total = g.Sum(), Top = g.Max() });
+var bQ = from e in db.Employees
+         group e.Salary by e.DepartmentId into g           // "group ELEMENT by KEY"
+         select new { g.Key, Total = g.Sum(), Top = g.Max() };
+
+// (c) key + result selector: the Select is folded into the GroupBy call
+//     (query syntax has no equivalent keyword; it is always group ... into g select ...)
+var c  = db.Employees.GroupBy(
+             e => e.DepartmentId,
+             (key, rows) => new { DepartmentId = key, Headcount = rows.Count(), Payroll = rows.Sum(r => r.Salary) });
+var cQ = from e in db.Employees
+         group e by e.DepartmentId into g
+         select new { DepartmentId = g.Key, Headcount = g.Count(), Payroll = g.Sum(r => r.Salary) };
+```
+
+Viva point: query syntax can end a group with `group … by …` (no `into`) and return the raw `IGrouping`s, but any further filtering, ordering, or aggregation needs `into g`, which starts a *query continuation*.
+
+##### 13.7 Different kinds of grouping keys
+
+```csharp
+// By date part (time stripped) -> orders per day
+var perDay  = db.Orders.GroupBy(o => o.OrderDate.Date)
+                       .Select(g => new { Day = g.Key, Orders = g.Count() });
+var perDayQ = from o in db.Orders
+              group o by o.OrderDate.Date into g
+              select new { Day = g.Key, Orders = g.Count() };
+
+// By enum -> orders per status
+var perStatus  = db.Orders.GroupBy(o => o.Status)
+                          .Select(g => new { Status = g.Key, Orders = g.Count() });
+var perStatusQ = from o in db.Orders
+                 group o by o.Status into g
+                 select new { Status = g.Key, Orders = g.Count() };
+
+// By a boolean expression -> a two-way split (partition)
+var split  = db.Employees.GroupBy(e => e.Salary >= 700)
+                         .Select(g => new { HighEarner = g.Key, Count = g.Count() });
+var splitQ = from e in db.Employees
+             group e by e.Salary >= 700 into g
+             select new { HighEarner = g.Key, Count = g.Count() };
+
+// By a string function -> customers per first letter of the name
+var byInitial  = db.Customers.GroupBy(c => c.Name.Substring(0, 1))
+                             .Select(g => new { Initial = g.Key, Customers = g.Count() });
+var byInitialQ = from c in db.Customers
+                 group c by c.Name.Substring(0, 1) into g
+                 select new { Initial = g.Key, Customers = g.Count() };
+
+// By a constant -> ONE group = whole-table aggregates in a single row (no GROUP BY in SQL)
+var overall  = db.OrderLines.GroupBy(_ => 1)
+                            .Select(g => new { Lines = g.Count(), Units = g.Sum(l => l.Quantity), Revenue = g.Sum(l => l.Quantity * l.UnitPrice) });
+var overallQ = from l in db.OrderLines
+               group l by 1 into g
+               select new { Lines = g.Count(), Units = g.Sum(l => l.Quantity), Revenue = g.Sum(l => l.Quantity * l.UnitPrice) };
+```
+
+Notes: `Date`, `Year`, `Month`, and `Substring` translate to `CONVERT(date, …)`, `DATEPART`, and `SUBSTRING`. A `null` key forms its own group (SQL `GROUP BY` does the same). The constant key is the way to get several aggregates in one round trip: `GroupBy(_ => 1)` is cheaper than five separate `SumAsync`/`CountAsync` calls. When the table might be empty it returns **no row** (not a row of zeros), so use `FirstOrDefaultAsync()` and default the result.
+
+##### 13.8 Every common aggregate in one group
+
+```csharp
+var stats =
+    from e in db.Employees
+    where e.DepartmentId != null
+    group e by e.DepartmentId into g
+    select new
+    {
+        DepartmentId = g.Key,
+        Headcount    = g.Count(),                          // COUNT(*)
+        BigCount     = g.LongCount(),                      // COUNT_BIG(*)
+        HighEarners  = g.Count(x => x.Salary >= 700),      // COUNT(CASE WHEN ...)
+        TotalSalary  = g.Sum(x => x.Salary),
+        AvgSalary    = g.Average(x => x.Salary),
+        LowSalary    = g.Min(x => x.Salary),
+        TopSalary    = g.Max(x => x.Salary),
+        Managers     = g.Select(x => x.ManagerId).Distinct().Count(),   // COUNT(DISTINCT ...)
+        HasUnmanaged = g.Any(x => x.ManagerId == null),    // EXISTS / CASE WHEN
+        AllPaid      = g.All(x => x.Salary > 0)            // NOT EXISTS (... <= 0)
+    };
+
+var statsM = db.Employees
+    .Where(e => e.DepartmentId != null)
+    .GroupBy(e => e.DepartmentId)
+    .Select(g => new
+    {
+        DepartmentId = g.Key,
+        Headcount    = g.Count(),
+        BigCount     = g.LongCount(),
+        HighEarners  = g.Count(x => x.Salary >= 700),
+        TotalSalary  = g.Sum(x => x.Salary),
+        AvgSalary    = g.Average(x => x.Salary),
+        LowSalary    = g.Min(x => x.Salary),
+        TopSalary    = g.Max(x => x.Salary),
+        Managers     = g.Select(x => x.ManagerId).Distinct().Count(),
+        HasUnmanaged = g.Any(x => x.ManagerId == null),
+        AllPaid      = g.All(x => x.Salary > 0)
+    });
+```
+
+`Average` of an `int` column returns `double`, and of `decimal` returns `decimal`. `Sum`/`Average` on an empty or all-null group yield `NULL` in SQL; cast to a nullable type and use `?? 0` if the value is mapped to a non-nullable property.
+
+##### 13.9 `HAVING` on different aggregates
+
+```csharp
+// Departments whose payroll exceeds 1,000 AND whose average salary is under 800
+var heavy =
+    from e in db.Employees
+    group e by e.DepartmentId into g
+    where g.Sum(x => x.Salary) > 1_000 && g.Average(x => x.Salary) < 800
+    select new { DepartmentId = g.Key, Payroll = g.Sum(x => x.Salary) };
+
+var heavyM = db.Employees
+    .GroupBy(e => e.DepartmentId)
+    .Where(g => g.Sum(x => x.Salary) > 1_000 && g.Average(x => x.Salary) < 800)
+    .Select(g => new { DepartmentId = g.Key, Payroll = g.Sum(x => x.Salary) });
+
+// Customers who have at least one Cancelled order (HAVING with Any)
+var troubled =
+    from o in db.Orders
+    group o by o.CustomerId into g
+    where g.Any(x => x.Status == OrderStatus.Cancelled)
+    select g.Key;
+
+var troubledM = db.Orders
+    .GroupBy(o => o.CustomerId)
+    .Where(g => g.Any(x => x.Status == OrderStatus.Cancelled))
+    .Select(g => g.Key);
+
+// Groups with exactly one distinct value (e.g. customers who always ship to one city) -> Min == Max
+var single =
+    from o in db.Orders
+    group o by o.CustomerId into g
+    where g.Min(x => x.Customer.City) == g.Max(x => x.Customer.City)
+    select g.Key;
+```
+
+```sql
+SELECT DepartmentId, SUM(Salary)
+FROM Employees
+GROUP BY DepartmentId
+HAVING SUM(Salary) > 1000 AND AVG(Salary) < 800;
+```
+
+##### 13.10 Ordering by an aggregate, then paging the groups
+
+```csharp
+// Page 2 (rows 11-20) of customers ranked by revenue
+var page =
+    (from l in db.OrderLines
+     group l by l.Order.CustomerId into g
+     orderby g.Sum(x => x.Quantity * x.UnitPrice) descending, g.Key      // g.Key = tie-breaker so paging is stable
+     select new { CustomerId = g.Key, Revenue = g.Sum(x => x.Quantity * x.UnitPrice) })
+    .Skip(10).Take(10);
+
+var pageM = db.OrderLines
+    .GroupBy(l => l.Order.CustomerId)
+    .Select(g => new { CustomerId = g.Key, Revenue = g.Sum(x => x.Quantity * x.UnitPrice) })
+    .OrderByDescending(x => x.Revenue).ThenBy(x => x.CustomerId)
+    .Skip(10).Take(10);                                                  // OFFSET 10 ROWS FETCH NEXT 10 ROWS ONLY
+```
+
+`Skip`/`Take` without a deterministic `OrderBy` (including a tie-breaker) can repeat or drop groups between pages.
+
+##### 13.11 Highest / lowest row per group (the whole row, not just the aggregate)
+
+`g.Max(x => x.Salary)` returns only the number. To return the employee who earns it, order inside the group and take the first:
+
+```csharp
+// Highest-paid employee in each department
+var topPaid =
+    from e in db.Employees
+    group e by e.DepartmentId into g
+    select g.OrderByDescending(x => x.Salary).ThenBy(x => x.Id).First();
+
+var topPaidM = db.Employees
+    .GroupBy(e => e.DepartmentId)
+    .Select(g => g.OrderByDescending(x => x.Salary).ThenBy(x => x.Id).First());
+
+// Navigation alternative that avoids GroupBy entirely (and keeps departments with no staff)
+var topPaid2 = db.Departments.Select(d => new
+{
+    d.Name,
+    TopEarner = d.Employees.OrderByDescending(e => e.Salary).Select(e => e.Name).FirstOrDefault()
+});
+```
+
+`ThenBy(x => x.Id)` makes "the first" deterministic when two people share the top salary. EF Core 11 is reported to translate `g.MaxBy(…)` / `g.MinBy(…)` per group as well; see [section 22](#linq-version-features).
+
+##### 13.12 Group in memory after fetching: `GroupBy`, `ToLookup`, `ToDictionary`
+
+When you need each group's *members* (not just aggregates), fetch the rows with one query and group on the client. `AsEnumerable()` marks the switch from SQL to LINQ to Objects:
+
+```csharp
+var rows = await db.Orders
+    .Where(o => o.OrderDate.Year == 2025)
+    .Select(o => new { o.CustomerId, o.Id, o.OrderDate, o.Status })
+    .ToListAsync();                                     // SQL ends here
+
+// GroupBy: deferred, each group keeps its members
+var byCustomer =
+    from o in rows
+    group o by o.CustomerId into g
+    select new { CustomerId = g.Key, Orders = g.OrderBy(x => x.OrderDate).ToList() };
+
+var byCustomerM = rows
+    .GroupBy(o => o.CustomerId)
+    .Select(g => new { CustomerId = g.Key, Orders = g.OrderBy(x => x.OrderDate).ToList() });
+
+// ToLookup: built immediately, O(1) lookup, a missing key returns an EMPTY sequence (not an exception)
+ILookup<int, int> orderIdsByCustomer = rows.ToLookup(o => o.CustomerId, o => o.Id);
+int[] mine = orderIdsByCustomer[42].ToArray();
+
+// ToDictionary on grouped data: build the groups first (duplicate keys would throw)
+Dictionary<int, int> countByCustomer = rows
+    .GroupBy(o => o.CustomerId)
+    .ToDictionary(g => g.Key, g => g.Count());
+
+// string.Join per group has no SQL translation, so it must run in memory
+var statusList =
+    from o in rows
+    group o.Status by o.CustomerId into g
+    select new { CustomerId = g.Key, Statuses = string.Join(", ", g.Distinct()) };
+
+var statusListM = rows
+    .GroupBy(o => o.CustomerId, o => o.Status)
+    .Select(g => new { CustomerId = g.Key, Statuses = string.Join(", ", g.Distinct()) });
+```
+
+Deferred vs immediate: `GroupBy` re-runs each time you enumerate it; `ToLookup`/`ToDictionary` snapshot once. In EF Core, a `GroupBy` whose groups are returned whole is evaluated on the client after fetching every row (see [section 19](#linq-group-in-sql-shape-in-memory)).
+
 ---
 
 #### 14. Join then group (multiple tables)
@@ -2694,6 +3010,8 @@ var shares = total == 0 ? [] : await db.OrderLines
 
 ---
 
+<a id="linq-group-in-sql-shape-in-memory"></a>
+
 #### 19. Group in SQL, shape in memory
 
 Nested groups (category → year → revenue) and window-style calculations (running total, rank) are not translated from ordinary LINQ. Aggregate **flat** in the database, then reshape the small result in memory:
@@ -2719,6 +3037,17 @@ var nested = flat
         Years = cg.OrderBy(x => x.Year).Select(x => new { x.Year, x.Revenue }).ToList()
     });
 
+// Nested grouping, query expression syntax
+var nestedQ =
+    from x in flat
+    group x by x.Category into cg
+    select new
+    {
+        Category = cg.Key,
+        Total = cg.Sum(x => x.Revenue),
+        Years = (from y in cg orderby y.Year select new { y.Year, y.Revenue }).ToList()
+    };
+
 // Running total per category, plus rank by revenue
 var withRunning = flat
     .GroupBy(x => x.Category)
@@ -2737,6 +3066,11 @@ var withRunning = flat
 var ranked = flat
     .OrderByDescending(x => x.Revenue)
     .Select((x, index) => new { Rank = index + 1, x.Category, x.Year, x.Revenue });
+
+// Query syntax has no keyword for the index overload of Select, so rank needs method syntax,
+// or a mix: number the rows after the ordered query expression
+var rankedQ = (from x in flat orderby x.Revenue descending select x)
+    .Select((x, index) => new { Rank = index + 1, x.Category, x.Year, x.Revenue });
 ```
 
 For large data, use SQL window functions (`SUM() OVER`, `ROW_NUMBER()`) through a view or raw SQL instead; see [window functions](#sql-server-advanced-grouping-and-window-functions-md).
@@ -2754,15 +3088,21 @@ Related in-memory notes:
 | Inner join | `join b in B on a.K equals b.K` | `A.Join(B, a => a.K, b => b.K, (a, b) => …)` | `INNER JOIN` |
 | Left join | `join … into g from b in g.DefaultIfEmpty()` | `GroupJoin` + `SelectMany(DefaultIfEmpty)`; .NET 10 `LeftJoin` | `LEFT JOIN` |
 | Right join | swap sides of a left join | .NET 10 `RightJoin` | `RIGHT JOIN` |
-| Full join | left join `Concat` right-only rows | same | `FULL OUTER JOIN` |
+| Full join | left join `Concat` right-only rows | same; EF Core 11 `FullJoin` (reported) | `FULL OUTER JOIN` |
 | Cross join | `from a in A from b in B` | `A.SelectMany(a => B, …)` | `CROSS JOIN` |
 | Non-equi join | `from b in B.Where(b => range…)` | `SelectMany` + `Where` | `JOIN … ON a.X BETWEEN …` |
 | Semi / anti join | `where B.Any(…)` / `!B.Any(…)` | `Where(a => B.Any(…))` | `EXISTS` / `NOT EXISTS` |
 | Composite key | `on new { a.X, a.Y } equals new { b.X, b.Y }` | anonymous key selectors | `ON a.X = b.X AND a.Y = b.Y` |
 | Group | `group x by key into g` | `GroupBy(key)` | `GROUP BY` |
 | Having | `where` after `into g` | `.Where(g => …)` after `GroupBy` | `HAVING` |
+| Group, element selector | `group e.Salary by e.DeptId into g` | `GroupBy(e => e.DeptId, e => e.Salary)` | `GROUP BY DeptId` |
+| Group, result selector | (always `group … into g select …`) | `GroupBy(key, (k, rows) => …)` | `GROUP BY` |
+| Group by constant | `group x by 1 into g` | `GroupBy(_ => 1)` | aggregate with no `GROUP BY` |
+| Row with max per group | `select g.OrderByDescending(…).First()` | same; EF Core 11 `g.MaxBy(…)` | `ROW_NUMBER()` / `TOP (1)` subquery |
 | Distinct count | `g.Select(x => x.Id).Distinct().Count()` | same | `COUNT(DISTINCT Id)` |
 | Conditional sum | `g.Sum(x => cond ? v : 0)` | same | `SUM(CASE WHEN …)` |
+| Count per key (in memory) | `from x in xs group x by k into g select (g.Key, g.Count())` | .NET 9 `xs.CountBy(k)` | `COUNT(*) … GROUP BY` |
+| Aggregate per key (in memory) | `group … into g select (g.Key, g.Sum(…))` | .NET 9 `xs.AggregateBy(k, seed, func)` | `SUM … GROUP BY` |
 
 #### 21. Viva quick answers
 
@@ -2779,6 +3119,131 @@ Related in-memory notes:
 - **`Concat` vs `Union`?** `Concat` = `UNION ALL` (keeps duplicates, cheaper); `Union` = `UNION` (removes duplicates).
 - **Why can't you use `?.` in an EF query?** Expression trees can't contain null-propagating operators (CS8072). Use a ternary null check.
 - **Where should filtering go?** Filter rows **before** grouping (`WHERE`); filter on aggregates **after** grouping (`HAVING`). For a left join, put right-side filters **inside** the joined source, not in a later `where`.
+
+---
+
+<a id="linq-version-features"></a>
+
+#### 22. What recent versions added (with query and lambda forms)
+
+| Version | LINQ / EF Core addition | Query syntax keyword? |
+|---|---|---|
+| .NET 9 (C# 13) | `CountBy`, `AggregateBy`, `Index()` (LINQ to Objects) | No |
+| .NET 10 / EF Core 10 | `LeftJoin`, `RightJoin`; `ExecuteUpdateAsync` with an ordinary lambda; named query filters | No |
+| EF Core 11 (RC at time of writing) | `FullJoin`; per-group `MaxBy`/`MinBy` (reported, verify) | No |
+
+None of these added a query-syntax keyword. Query expressions still cover only `from/where/select/group/into/orderby/join/let`; everything newer is method syntax, and you mix the two with parentheses: `(from … select …).CountBy(…)`.
+
+##### 22.1 .NET 9: `CountBy`, `AggregateBy`, `Index` (LINQ to Objects)
+
+These replace a `GroupBy` + `Select` when you only need one aggregate per key, without building the groups:
+
+```csharp
+record Sale(string Region, string Product, decimal Amount);
+List<Sale> sales = [ new("EU", "A", 10), new("EU", "B", 20), new("US", "A", 5) ];
+
+// CountBy: (key, count) pairs
+var counts  = sales.CountBy(s => s.Region);                          // EU=2, US=1
+var countsQ = from s in sales                                        // the query-syntax equivalent
+              group s by s.Region into g
+              select KeyValuePair.Create(g.Key, g.Count());
+
+// AggregateBy: (key, running aggregate), with a seed and an accumulator
+var totals  = sales.AggregateBy(s => s.Region, 0m, (sum, s) => sum + s.Amount);   // EU=30, US=5
+var totalsQ = from s in sales
+              group s by s.Region into g
+              select KeyValuePair.Create(g.Key, g.Sum(s => s.Amount));
+
+// AggregateBy with a seed per key (e.g. keep a list per key)
+var names = sales.AggregateBy(
+    s => s.Region,
+    _ => new List<string>(),
+    (list, s) => { list.Add(s.Product); return list; });
+
+// Index: element + position, instead of Select((x, i) => (i, x))
+foreach (var (i, sale) in sales.Index())
+    Console.WriteLine($"{i}: {sale.Product}");
+var indexed  = sales.Select((s, i) => (i, s));                       // pre-.NET 9 form
+```
+
+Use them on in-memory data. For `IQueryable` against SQL Server, I could not confirm EF Core translates `CountBy`/`AggregateBy`, so use `GroupBy(...).Select(g => new { g.Key, Count = g.Count() })` in database queries and check `ToQueryString()` before relying on them.
+
+##### 22.2 .NET 10 / EF Core 10: `LeftJoin` and `RightJoin`
+
+```csharp
+// Lambda form (new operators)
+var left  = db.Customers.LeftJoin(db.Orders, c => c.Id, o => o.CustomerId,
+                (c, o) => new { c.Name, OrderId = (int?)o!.Id });
+var right = db.Orders.RightJoin(db.Customers, o => o.CustomerId, c => c.Id,
+                (o, c) => new { c.Name, OrderId = o != null ? (int?)o.Id : null });
+
+// Query form: unchanged, the classic pattern still works and produces the same LEFT JOIN
+var leftQ =
+    from c in db.Customers
+    join o in db.Orders on c.Id equals o.CustomerId into og
+    from o in og.DefaultIfEmpty()
+    select new { c.Name, OrderId = o != null ? (int?)o.Id : null };
+
+// Left join + group (the "include zero counts" case) using LeftJoin
+var perCustomer = db.Customers
+    .LeftJoin(db.Orders, c => c.Id, o => o.CustomerId, (c, o) => new { c, o })
+    .GroupBy(x => new { x.c.Id, x.c.Name })
+    .Select(g => new { g.Key.Name, Orders = g.Count(x => x.o != null) });   // count only real orders
+```
+
+##### 22.3 EF Core 10: `ExecuteUpdateAsync` with an ordinary lambda, and named query filters
+
+```csharp
+// Before EF Core 10, a conditional update needed an expression-tree trick.
+// Now the setters are plain statements, so ordinary `if` works:
+bool rename = newName is not null;
+await db.Products
+    .Where(p => p.CategoryId == categoryId)
+    .ExecuteUpdateAsync(s =>
+    {
+        s.SetProperty(p => p.ListPrice, p => p.ListPrice * 1.1m);
+        if (rename) s.SetProperty(p => p.Name, newName!);
+    });
+// ExecuteUpdate/ExecuteDelete have no query-syntax form; end a query expression with a method call:
+await (from p in db.Products where p.CategoryId == categoryId select p)
+    .ExecuteUpdateAsync(s => s.SetProperty(p => p.ListPrice, p => p.ListPrice * 1.1m));
+
+// Named query filters: several filters per entity, disabled individually
+modelBuilder.Entity<Product>()
+    .HasQueryFilter("SoftDelete", p => !p.IsDeleted)
+    .HasQueryFilter("Tenant",     p => p.TenantId == tenantId);
+
+var all      = db.Products.IgnoreQueryFilters(["SoftDelete"]);   // lambda form: keep the tenant filter only
+var allQ     = from p in db.Products.IgnoreQueryFilters(["SoftDelete"]) select p;   // query form
+```
+
+##### 22.4 EF Core 11 (release candidate at the time of writing): `FullJoin`, per-group `MaxBy`/`MinBy`
+
+Reported by a third-party article on the 11.0 RC (it requires .NET 11); confirm against the official docs and `ToQueryString()` before quoting it in an interview:
+
+```csharp
+// Best (longest) play per month: one SQL statement, a correlated TOP (1) subquery per group
+var topPerMonth = db.Plays
+    .GroupBy(p => p.PlayedAt.Month)
+    .Select(g => new { Month = g.Key, TopTrack = g.MaxBy(p => p.Seconds)!.Track.Title });
+
+// Same intent in query syntax, which works on EF Core 10 and earlier too
+var topPerMonthQ =
+    from p in db.Plays
+    group p by p.PlayedAt.Month into g
+    select new
+    {
+        Month = g.Key,
+        TopTrack = g.OrderByDescending(p => p.Seconds).First().Track.Title
+    };
+
+// MaxBy / MinBy without GroupBy: the whole row with the largest or smallest key
+var busiest = await db.Artists.MaxByAsync(a => a.Tracks.Count());
+```
+
+##### 22.5 C# 14 and expression trees (why upgrades sometimes break queries)
+
+C# 14 added first-class `Span<T>` conversions, so `array.Contains(x)` inside an expression tree can bind to `MemoryExtensions.Contains` (a span method) instead of `Enumerable.Contains`. EF Core 10 handles this, but older EF Core versions on a newer compiler can fail to translate it. Workarounds: use a `List<T>`, call `.AsEnumerable()` on the array, or upgrade EF Core. Null-conditional assignment (`a?.b = c`) is also not allowed in an expression tree, the same restriction as `?.` (see the viva answers in section 21).
 
 ---
 
